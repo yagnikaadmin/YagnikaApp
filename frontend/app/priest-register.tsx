@@ -6,9 +6,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { colors, radius } from '@/src/theme';
-import { apiFetch } from '@/src/context/AuthContext';
+import { apiFetch, useAuth } from '@/src/context/AuthContext';
 import { pickProfilePhoto } from '@/src/utils/pickProfilePhoto';
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,8 @@ const EMPTY: FormState = {
 };
 
 export default function PriestRegister() {
+  const router = useRouter();
+  const { registerPriest } = useAuth();
   const [f, setF] = useState<FormState>(EMPTY);
   const set = <K extends keyof FormState>(k: K) => (v: FormState[K]) => setF(p => ({ ...p, [k]: v }));
 
@@ -79,7 +82,6 @@ export default function PriestRegister() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [doneName, setDoneName] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch('/poojas').then(r => r.json()).then((rows: Svc[]) => setCatalog(rows.filter(r => r.category))).catch(() => {});
@@ -190,32 +192,14 @@ export default function PriestRegister() {
 
     setError(''); setBusy(true);
     try {
-      const res = await apiFetch('/auth/register-priest', { method: 'POST', body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Registration failed');
-      setDoneName(f.name.trim());
+      // Creates the priest account, records into priest_registration, and
+      // persists the session (token + user) so the dashboard/profile work.
+      await registerPriest(payload);
+      router.replace('/priest-dashboard');
     } catch (e: any) {
       setError(e.message || 'Registration failed');
     } finally { setBusy(false); }
   };
-
-  const resetAll = () => { setF(EMPTY); setServices(new Set()); setDoneName(null); setOpenSection('A'); setOpenCat(''); };
-
-  if (doneName) {
-    return (
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-        <View style={styles.doneWrap}>
-          <View style={styles.doneBadge}><Ionicons name="checkmark" size={40} color="#FFF" /></View>
-          <Text style={styles.doneTitle}>Registration Recorded</Text>
-          <Text style={styles.doneSub}>
-            {doneName}&apos;s Yagnika registration has been saved to the priest_registration table.
-          </Text>
-          <Pressable onPress={resetAll} style={styles.cta}>
-            <Text style={styles.ctaText}>Register Another Priest</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   const totalSel = services.size;
 
@@ -530,9 +514,4 @@ const styles = StyleSheet.create({
 
   cta: { backgroundColor: colors.darkRed, borderRadius: radius.md, paddingVertical: 16, alignItems: 'center', marginTop: 6 },
   ctaText: { color: '#FFF', fontSize: 15, fontWeight: '800' },
-
-  doneWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
-  doneBadge: { width: 76, height: 76, borderRadius: 38, backgroundColor: '#16A34A', alignItems: 'center', justifyContent: 'center' },
-  doneTitle: { fontSize: 20, fontWeight: '800', color: colors.navy },
-  doneSub: { fontSize: 13, color: colors.gray600, textAlign: 'center', lineHeight: 19 },
 });
