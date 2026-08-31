@@ -1,0 +1,36 @@
+# ---- dependencies ----
+**/node_modules/
+backend/.venv/
+backend/venv/
+
+# ---- python ----
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---- expo / metro / rn ----
+frontend/.expo/
+frontend/.expo-shared/
+frontend/.metro-cache/
+frontend/dist/
+frontend/web-build/
+frontend/android/
+frontend/ios/
+*.jsbundle
+
+# ---- env / secrets ----
+**/.env
+**/.env.local
+**/.env.*.local
+
+# ---- logs & tmp ----
+*.log
+backend/downloads/
+backend/uvicorn.log
+
+# ---- editor / OS ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
