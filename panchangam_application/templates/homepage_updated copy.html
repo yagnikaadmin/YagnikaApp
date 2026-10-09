@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panchangam Dynamic Sky & Kala Chakra Clock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Noto+Sans+Telugu:wght@400;500;700;900&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    html, body {
+      width: 100%; height: 100%; background-color: #000; font-family: 'Roboto', 'Noto Sans Telugu', sans-serif; overflow-x: hidden; overflow-y: auto;
+    }
+
+    .bg-layer {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-size: cover; background-position: center center;
+      background-repeat: no-repeat; opacity: 0; transition: opacity 1.5s ease-in-out; z-index: 1;
+    }
+    .bg-morning   { background-image: url('/static/HomePage_Morning.webp'); }
+    .bg-afternoon { background-image: url('/static/HomePage_Afternoon.webp'); }
+    .bg-evening   { background-image: url('/static/HomePage_Evening.webp'); }
+    .bg-night     { background-image: url('/static/HomePage_Night.webp'); }
+    .bg-layer.active { opacity: 1; }
+
+    .main-navbar {
+      position: fixed; top: 0; left: 0; width: 100%; height: 75px; z-index: 100; display: flex; justify-content: space-between;
+      align-items: center; padding: 0 3%; transition: background-color 1s ease, border-color 1s ease;
+    }
+    .brand-container { display: flex; align-items: center; height: 100%; gap: clamp(12px, 1.8vw, 25px); }
+
+    .main-navbar.day-theme { background: rgba(255, 248, 235, 0.55); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid rgba(128, 0, 0, 0.15); }
+    /* Added .nav-timings to the theme color rules */
+    .main-navbar.day-theme .nav-links a, .main-navbar.day-theme .lang-dropdown-btn, .main-navbar.day-theme .nav-timings { color: #4a0000; text-shadow: 0 1px 2px rgba(255, 255, 255, 0.7); }
+    .main-navbar.day-theme .nav-links a:hover, .main-navbar.day-theme .nav-links a.active { color: #800000; border-bottom: 2px solid #800000; }
+    
+    .main-navbar.night-theme { background: rgba(10, 10, 20, 0.65); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255, 255, 255, 0.2); }
+    /* Added .nav-timings to the theme color rules */
+    .main-navbar.night-theme .nav-links a, .main-navbar.night-theme .lang-dropdown-btn, .main-navbar.night-theme .nav-timings { color: #ffffff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
+    .main-navbar.night-theme .nav-links a:hover, .main-navbar.night-theme .nav-links a.active { color: #ffffff; border-bottom: 2px solid #ffffff; }
+
+    .brand-logo { display: flex; align-items: center; height: 100%; text-decoration: none; }
+    .logo-img { height: 100%; max-height: 65px; width: auto; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3)); }
+
+    /* Nav Timings styling */
+    .nav-timings { display: flex; align-items: center; gap: clamp(10px, 1.5vw, 20px); font-size: clamp(11px, 1vw, 14px); font-weight: 700; letter-spacing: 0.5px; transition: color 1s ease; }
+    .timing-item { display: flex; align-items: center; gap: 5px; }
+
+    .nav-links { display: flex; list-style: none; align-items: center; height: 100%; gap: clamp(14px, 2vw, 28px); }
+    .nav-links a { font-size: clamp(12px, 1vw, 15px); font-weight: 700; text-decoration: none; letter-spacing: 0.8px; padding-bottom: 3px; transition: color 0.3s ease, border-color 0.3s ease; border-bottom: 2px solid transparent; }
+
+    .lang-dropdown { position: relative; display: inline-block; }
+    .lang-dropdown-btn { background: transparent; border: none; cursor: pointer; font-family: inherit; font-size: clamp(12px, 1vw, 15px); font-weight: 700; letter-spacing: 0.8px; display: flex; align-items: center; gap: 4px; padding-bottom: 3px; }
+    .lang-dropdown-content { display: none; position: absolute; right: 0; top: 100%; background-color: rgba(20, 20, 30, 0.95); min-width: 120px; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5); border-radius: 8px; overflow: hidden; z-index: 101; border: 1px solid rgba(255,255,255,0.2); }
+    .lang-dropdown-content button { color: #fff; padding: 10px 16px; text-decoration: none; display: block; width: 100%; text-align: left; background: none; border: none; font-family: inherit; font-size: 14px; cursor: pointer; transition: background 0.2s ease; }
+    .lang-dropdown-content button:hover { background-color: rgba(212, 175, 55, 0.3); }
+    .lang-dropdown:hover .lang-dropdown-content { display: block; }
+
+    /* Layout Adjustments for Center Grouping & Gap */
+    .main-wrapper { 
+      position: relative; z-index: 20; width: 100%; min-height: 100vh; 
+      display: flex; flex-direction: column; align-items: center; justify-content: center; 
+      padding-top: 80px; padding-bottom: 40px;
+    }
+
+    .content-row {
+      position: relative;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center; /* Exactly centers the book */
+      width: 100vw;
+      max-width: 100%;
+      padding: 0;
+    }
+
+    .left-column { 
+      display: flex; flex-direction: column; align-items: center; gap: 24px; 
+      width: 100%; max-width: 550px; 
+      z-index: 10;
+    }
+
+    .right-column { 
+      position: absolute;
+      right: 1%; /* 1% gap to the extreme right border */
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex; justify-content: center; align-items: center; 
+      z-index: 5;
+    }
+    
+    .panchangam-book { position: relative; z-index: 60; width: 100%; display: flex; border-radius: 12px; padding: 24px clamp(16px, 2.2vw, 30px); transition: background 1s ease, border-color 1s ease, color 1s ease, box-shadow 1s ease; box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4); }
+    .panchangam-book::before { content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 2px; height: 100%; background: linear-gradient(to bottom, transparent, rgba(212, 175, 55, 0.5), transparent); z-index: 5; }
+    
+    .book-corner { position: absolute; width: 16px; height: 16px; border: 2px solid #d4af37; pointer-events: none; }
+    .top-left { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+    .top-right { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+    .bottom-left { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+    .bottom-right { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+
+    .book-page { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 8px; }
+    .book-page.left-page { text-align: center; border-right: 1px dashed rgba(212, 175, 55, 0.3); padding-right: clamp(10px, 1.5vw, 18px); align-items: center; }
+    .book-page.right-page { padding-left: clamp(10px, 1.5vw, 18px); }
+
+    .panchangam-book.day-theme { background: rgba(255, 248, 230, 0.35); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1.5px solid rgba(128, 0, 0, 0.3); color: #4a0000; box-shadow: 0 15px 35px rgba(128, 0, 0, 0.15), inset 0 0 25px rgba(255, 255, 255, 0.3); text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8); }
+    .panchangam-book.day-theme .sub-heading { border-bottom-color: rgba(128, 0, 0, 0.3); color: #700000; }
+    .panchangam-book.day-theme .panchangam-row { border-bottom: 1px dashed rgba(128, 0, 0, 0.2); }
+    
+    .panchangam-book.night-theme { background: rgba(10, 12, 24, 0.45); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1.5px solid rgba(255, 255, 255, 0.25); color: #ffffff; box-shadow: 0 15px 35px rgba(0, 0, 0, 0.7), inset 0 0 25px rgba(255, 255, 255, 0.08); text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9); }
+    .panchangam-book.night-theme .sub-heading { border-bottom-color: rgba(255, 255, 255, 0.35); color: #ffffff; }
+    .panchangam-book.night-theme .panchangam-row { border-bottom: 1px dashed rgba(255, 255, 255, 0.2); }
+
+    .main-heading { font-size: clamp(18px, 2vw, 24px); font-weight: 900; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; line-height: 1.2; }
+    .sub-heading { font-size: clamp(11px, 1vw, 13px); font-weight: 700; letter-spacing: 0.8px; margin-bottom: 8px; opacity: 0.95; border-bottom: 1.5px solid; padding-bottom: 3px; display: inline-block; }
+    .date-badge { font-size: clamp(11px, 1vw, 13px); font-weight: 800; margin: 6px 0 10px 0; padding: 4px 12px; border-radius: 6px; background: rgba(212, 175, 55, 0.2); border: 1px solid rgba(212, 175, 55, 0.5); display: inline-block; letter-spacing: 0.5px; }
+    .om-logo-img { max-width: clamp(45px, 5vw, 65px); height: auto; object-fit: contain; margin-top: 4px; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4)); }
+
+    .panchangam-details { display: flex; flex-direction: column; gap: 6px; font-size: clamp(11px, 0.9vw, 13.5px); font-weight: 500; }
+    .panchangam-row { display: flex; justify-content: space-between; align-items: center; padding-bottom: 3px; }
+    .panchangam-row:last-child { border-bottom: none; }
+    .panchangam-label { font-weight: 700; opacity: 0.9; }
+    .panchangam-value { font-weight: 700; }
+
+    .panchangam-actions { display:flex; gap:15px; align-items:center; justify-content:center; flex-wrap:wrap; margin-bottom: 10px; width: 100%;}
+
+    .btn-full-panchangam { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 12px 32px; font-size: clamp(13px, 1.1vw, 15px); font-weight: 800; letter-spacing: 1px; text-transform: uppercase; text-decoration: none; color: #ffffff; background: linear-gradient(135deg, #800000 0%, #4a0000 100%); border: 1.5px solid #d4af37; border-radius: 25px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), inset 0 0 10px rgba(212, 175, 55, 0.3); cursor: pointer; transition: all 0.3s ease; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+    .btn-full-panchangam:hover { transform: translateY(-2px); background: linear-gradient(135deg, #a00000 0%, #600000 100%); box-shadow: 0 6px 20px rgba(212, 175, 55, 0.5), inset 0 0 15px rgba(255, 215, 0, 0.5); border-color: #ffd700; }
+
+    /* TRADITIONAL KALA CHAKRA WHEEL */
+    .panchangam-clock-container { 
+      position: relative; margin: 0; width: min(85vw, 65vh, 480px); height: min(85vw, 65vh, 480px); z-index: 50; display: flex; justify-content: center; align-items: center; border-radius: 50%; background: radial-gradient(circle, #2a0804 0%, #150301 70%, #050100 100%); border: clamp(4px, 1vw, 8px) solid #d4af37; box-shadow: 0 15px 50px rgba(0, 0, 0, 0.95), 0 0 30px rgba(212, 175, 55, 0.3), inset 0 0 25px #000; flex-shrink: 0; 
+    }
+    .clock-pointer { position: absolute; top: -18px; width: 0; height: 0; border-left: clamp(12px, 1.8vw, 18px) solid transparent; border-right: clamp(12px, 1.8vw, 18px) solid transparent; border-top: clamp(25px, 4vw, 40px) solid #ffd700; z-index: 70; filter: drop-shadow(0 5px 8px rgba(0,0,0,0.95)); }
+    .clock-pointer::after { content: ''; position: absolute; top: -35px; left: -8px; width: 16px; height: 16px; background: #ffd700; border-radius: 50%; box-shadow: 0 0 10px rgba(0,0,0,0.8); }
+    .outer-brass-ring { position: absolute; width: 96%; height: 96%; border-radius: 50%; border: 2px solid rgba(212, 175, 55, 0.5); box-shadow: inset 0 0 15px rgba(0,0,0,0.8); pointer-events: none; }
+    
+    .outer-wheel { position: absolute; width: 95%; height: 95%; border-radius: 50%; }
+    
+    .time-spoke { position: absolute; top: 0; left: 50%; width: 30%; height: 50%; margin-left: -15%; transform-origin: bottom center; display: flex; justify-content: center; align-items: flex-start; padding-top: 10%; transition: all 0.5s ease; }
+    .upright-content { text-align: center; transform-origin: center center; transition: all 0.5s ease; }
+    .label-title { font-size: clamp(9px, 1.2vw, 12px); font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; display: block; line-height: 1.1; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95); color: #d4f8e8; margin-bottom: 3px; }
+    .label-time { font-size: clamp(8px, 1vw, 10px); font-weight: 700; display: block; opacity: 0.95; letter-spacing: 0.2px; text-align: center; color: #ffd1d1; line-height: 1.3;}
+    .time-spoke.active-kala .upright-content { border: 2px solid #ffd700; transform: scale(1.15); box-shadow: 0 0 15px #ffd700; border-radius: 8px; padding: 5px; background: rgba(0, 0, 0, 0.85); }
+
+    .inner-wheel { position: absolute; width: 45%; height: 45%; border-radius: 50%; background: radial-gradient(circle, #3a0d04 0%, #1a0501 60%, #050100 100%); border: 3px solid #ffd700; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 60; box-shadow: 0 0 25px rgba(0, 0, 0, 0.95), inset 0 0 15px #b8860b; padding: 12px; text-align: center; overflow: hidden; }
+    .date-display { font-size: clamp(7px, 0.8vw, 9px); color: #d4af37; margin-top: 1px; text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+    .digital-time { font-size: clamp(10px, 1.3vw, 14px); color: #ffd700; font-weight: 700; letter-spacing: 0.5px; text-shadow: 0 0 8px rgba(255, 215, 0, 0.6); margin: 4px 0; line-height: 1.3; max-width: 95%; word-wrap: break-word;}
+    .period-status { font-size: clamp(8px, 0.9vw, 10px); font-weight: 700; letter-spacing: 0.5px; padding: 2px 6px; border-radius: 12px; background: rgba(0, 0, 0, 0.75); border: 1px solid rgba(212, 175, 55, 0.6); color: #ffd700; text-shadow: 0 0 6px rgba(255, 215, 0, 0.5); text-align: center; }
+
+    /* Prevent overlap on smaller desktop screens */
+    @media (max-width: 1350px) { 
+        .content-row { flex-direction: column; padding-top: 20px; gap: 60px; } 
+        .right-column { position: relative; right: auto; top: auto; transform: none; }
+    }
+    @media (max-width: 768px) { 
+        .main-navbar { height: auto; padding: 8px 3%; flex-wrap: wrap; } 
+        .brand-container { width: 100%; justify-content: space-between; margin-bottom: 5px; } 
+        .logo-img { max-height: 52px; } 
+        .nav-links { gap: 12px; }
+        .nav-timings { order: 3; width: 100%; justify-content: center; margin-top: 8px; flex-wrap: wrap; } 
+    }
+    
+    .date-picker { border-radius: 2px 18px 2px 18px; padding: 10px 15px 10px 45px; min-width: 200px; border: 1px solid #5a3d06; background: radial-gradient(circle at 20px 50%, #1a0c02 5px, transparent 6px), repeating-linear-gradient(to bottom, transparent, transparent 3px, rgba(90, 61, 6, 0.15) 4px, rgba(90, 61, 6, 0.05) 5px), linear-gradient(to right, #b8860b, #e3c887 10%, #d4af37 50%, #e3c887 90%, #b8860b); color: #2a1405; font-size: 15px; font-weight: 800; font-family: 'Noto Sans Telugu', serif; letter-spacing: 1px; box-shadow: 2px 5px 10px rgba(0, 0, 0, 0.6), inset 0 0 12px rgba(90, 61, 6, 0.4); outline: none; cursor: pointer; }
+    .date-picker::-webkit-calendar-picker-indicator { filter: invert(15%) sepia(85%) saturate(400%) hue-rotate(345deg) brightness(50%) contrast(100%); cursor: pointer; }
+
+    /* --- ANIMATED MODAL STYLES --- */
+    .modal { display: none; position: fixed; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 9999; justify-content: center; align-items: center; }
+    
+    #splash-screen { position: absolute; width: 1672px; height: 941px; background-size: 1672px 941px; background-position: center; background-repeat: no-repeat; transform-origin: center center; z-index: 9999; transition: opacity 1s ease-out; }
+    
+    #canvas-wrapper { position: relative; width: 1672px; height: 941px; background-size: 1672px 941px; background-position: center; background-repeat: no-repeat; transform-origin: center center; flex-shrink: 0; }
+    
+    .page-box { position: absolute; width: 545px; height: 645px; top: 125px; padding: 0.5rem 1.5rem 1rem 1.5rem; overflow-y: auto; color: #2c1a04; opacity: 0; transition: opacity 0.25s ease-in-out; }
+    .left-page-modal { left: 202px; }
+    .right-page-modal { left: 925px; }
+
+    .page-box h2 { font-size: 1.4rem; margin-bottom: 0.8rem; text-align: center; color: #4a0000; border-bottom: 2px solid #8b0000; padding-bottom: 0.4rem; }
+    .section-title { font-weight: bold; margin: 1rem 0 0.4rem 0; color: #8b0000; text-align: center; }
+
+    /* Bottom Controls Bar for Modal Navigation */
+    .bottom-bar { background-color: rgba(0, 0, 0, 0.88); backdrop-filter: blur(8px); padding: 0.6rem 1.5rem; position: absolute; bottom: 0; left: 0; width: 100%; display: flex; justify-content: center; align-items: center; gap: 1.2rem; z-index: 1000; box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.5); }
+    .btn-time { background: linear-gradient(135deg, #4a0000, #8b0000); color: #ffffff; border: 1px solid #ffd700; padding: 0.5rem 1.2rem; font-size: 0.95rem; font-weight: bold; font-family: inherit; border-radius: 6px; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+    .btn-time:hover, .btn-time.active { background: #ffd700; color: #4a0000; box-shadow: 0 0 10px rgba(255, 215, 0, 0.6); }
+    .close-modal-btn { position: absolute; right: 20px; top: 20px; font-size: 35px; color: white; cursor: pointer; z-index: 10000; text-shadow: 0 2px 5px black; }
+    
+    .book-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+    .kala-grid td{ width: 100%; border-collapse: collapse; margin-top: 5px; font-size: clamp(15px, 1vw, 12px); }
+    .book-table td { padding: 6px 2px; border-bottom: 1px dashed rgba(90, 61, 6, 0.3); font-weight: 800; color: #2a1405;}
+
+    .kala-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 15px; margin-top: 5px; }
+    .kala-item { display: flex; flex-direction: column; border-bottom: 1px dashed rgba(90, 61, 6, 0.3); padding-bottom: 4px; font-weight: 800; color: #2a1405; transition: all 0.3s ease;}
+    .kala-item span.kala-name { color: #5a3d06; margin-bottom: 2px; font-weight: 900; }
+    .kala-item.active-modal-kala { background-color: rgba(212, 175, 55, 0.2); border: 1px solid #800000; border-radius: 4px; padding: 4px; transform: scale(1.02); box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: relative; }
+    .kala-item.active-modal-kala span.kala-name { color: #800000; }
+    .kala-item.active-modal-kala::after { content: 'Current'; position: absolute; top: -6px; right: 4px; font-size: 9px; color: #ffffff; background: #800000; padding: 2px 6px; border-radius: 10px; letter-spacing: 0.5px; font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+   </style>
+</head>
+
+<body>
+  <!-- ANIMATED FULL SCREEN MODAL -->
+  <div id="panchangamModal" class="modal">
+    <span class="close-modal-btn" id="closeModal">&times;</span>
+    <div id="splash-screen"></div>
+    <div id="canvas-wrapper">
+        <div class="page-box left-page-modal" id="panchangamLeftPage"></div>
+        <div class="page-box right-page-modal" id="panchangamRightPage"></div>
+    </div>
+    
+    <div class="bottom-bar">
+        <button class="btn-time" id="btn-yesterday" onclick="navigateModalDay(-1)">Bhootkaal</button>
+        <button class="btn-time active" id="btn-today" onclick="navigateModalDay(0)">Vartmankaal</button>
+        <button class="btn-time" id="btn-tomorrow" onclick="navigateModalDay(1)">Bhavishyakaal</button>
+    </div>
+  </div>
+
+  <div class="sky-viewport">
+    <div class="bg-layer bg-morning active" id="bgMorning"></div>
+    <div class="bg-layer bg-afternoon" id="bgAfternoon"></div>
+    <div class="bg-layer bg-evening" id="bgEvening"></div>
+    <div class="bg-layer bg-night" id="bgNight"></div>
+
+    <nav class="main-navbar" id="mainNavbar">
+      <div class="brand-container">
+        <a href="#" class="brand-logo"><img src="/static/Logo.webp" alt="Yagnika" class="logo-img"></a>
+      </div>
+
+      <!-- NEW TIMINGS CONTAINER -->
+      <div class="nav-timings" id="navTimings">
+        <span class="timing-item" title="Sunrise">🌅 <span id="nav-sunrise">--:--</span></span>
+        <span class="timing-item" title="Sunset">🌇 <span id="nav-sunset">--:--</span></span>
+        <span class="timing-item" title="Moonrise">🌝 <span id="nav-moonrise">--:--</span></span>
+        <span class="timing-item" title="Moonset">🌚 <span id="nav-moonset">--:--</span></span>
+      </div>
+
+      <ul class="nav-links">
+        <li><a href="#" class="active" id="nav-home">Home</a></li>
+        <li><a href="#" id="nav-panchangam">Panchangam</a></li>
+        <li class="lang-dropdown">
+          <button class="lang-dropdown-btn" id="langBtn">Languages ▼</button>
+          <div class="lang-dropdown-content">
+            <button onclick="setLanguage('en')">English</button>
+            <button onclick="setLanguage('te')">తెలుగు (Telugu)</button>
+          </div>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="main-wrapper">
+      <div class="content-row">
+        
+        <!-- Left Column: Book Card and Action Buttons -->
+        <div class="left-column">
+          <div class="panchangam-book day-theme" id="panchangamCard">
+            <div class="book-corner top-left"></div>
+            <div class="book-corner top-right"></div>
+            <div class="book-corner bottom-left"></div>
+            <div class="book-corner bottom-right"></div>
+            <div class="book-page left-page">
+              <h1 class="main-heading" id="greetingHeading">Good Morning</h1>
+              <h2 class="sub-heading" id="subHeading">Today's Yagnika Panchangam</h2>
+              <div class="date-badge" id="todayDateDisplay"></div>
+              <img src="/static/Om_Logo.webp" alt="Om" class="om-logo-img">
+            </div>
+            <div class="book-page right-page">
+              <div class="panchangam-details">
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-samvatsaram">Samvatsaram:</span><span class="panchangam-value" id="val-samvatsaram">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-ayanam">Ayanam:</span><span class="panchangam-value" id="val-ayanam">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-rithuvu">Rithuvu:</span><span class="panchangam-value" id="val-rithuvu">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-masam">Masam:</span><span class="panchangam-value" id="val-masam">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-paksham">Paksham:</span><span class="panchangam-value" id="val-paksham">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-thidhi">Thidhi:</span><span class="panchangam-value" id="val-thidhi">...</span></div>
+                <div class="panchangam-row"><span class="panchangam-label" id="lbl-nakshatram">Nakshatram:</span><span class="panchangam-value" id="val-nakshatram">...</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panchangam-actions">
+              <input type="date" id="selectedDate" class="date-picker">
+              <button id="btnFullPanchangam" class="btn-full-panchangam">Get Panchangam</button>
+          </div>
+        </div>
+
+        <!-- Right Column: Kala Chakra Wheel -->
+        <div class="right-column">
+          <div class="panchangam-clock-container">
+            <div class="clock-pointer"></div>
+            <div class="outer-brass-ring"></div>
+            <div class="outer-wheel" id="outerWheel"></div>
+            <div class="inner-wheel" id="innerWheel">
+              <div class="digital-time" id="clockTime" style="font-size: clamp(12px, 1.6vw, 18px); color: #fff; margin-bottom: 4px;">--:--:--</div>
+              <div class="date-display" id="lblCurrentKala">Current Kala</div>
+              <div class="digital-time" id="centerKalaName" style="color: #d4af37;">...</div>
+              <div class="period-status" id="centerKalaTime">--:-- - --:--</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentLanguage = 'en';
+    let currentPanchangam = null;
+    let timerInterval = null;
+    let currentTimeout = null;
+    let isOpeningComplete = false;
+
+    const i18n = {
+      en: {
+        navHome: "Home", navPanchangam: "Panchangam", langBtn: "Languages ▼",
+        goodMorning: "Good Morning", goodAfternoon: "Good Afternoon", goodEvening: "Good Evening", goodNight: "Good Night",
+        subHeading: "Today's Yagnika Panchangam", lblSamvatsaram: "Samvatsaram:", lblAyanam: "Ayanam:", lblRithuvu: "Rithuvu:",
+        lblMasam: "Masam:", lblPaksham: "Paksham:", lblThidhi: "Thidhi:", lblNakshatram: "Nakshatram:",
+        btnFullPanchangam: "Get Panchangam", currentKala: "Current Kala"
+      },
+      te: {
+        navHome: "ముఖ్య పుట", navPanchangam: "పంచాంగం", langBtn: "భాషలు ▼",
+        goodMorning: "శుభోదయం", goodAfternoon: "శుభ మధ్యాహ్నం", goodEvening: "శుభ సాయంత్రం", goodNight: "శుభ రాత్రి",
+        subHeading: "నేటి యాజ్ఞిక పంచాంగం", lblSamvatsaram: "సంవత్సరం:", lblAyanam: "అయనం:", lblRithuvu: "ఋతువు:",
+        lblMasam: "మాసం:", lblPaksham: "పక్షం:", lblThidhi: "తిథి:", lblNakshatram: "నక్షత్రం:",
+        btnFullPanchangam: "సంపూర్ణ పంచాంగం", currentKala: "ప్రస్తుత కాలం"
+      }
+    };
+
+    function setLanguage(lang) {
+      if (lang === currentLanguage) return;
+      currentLanguage = lang;
+      const dict = i18n[lang];
+      document.getElementById('nav-home').innerText = dict.navHome;
+      document.getElementById('nav-panchangam').innerText = dict.navPanchangam;
+      document.getElementById('langBtn').innerText = dict.langBtn;
+      document.getElementById('subHeading').innerText = dict.subHeading;
+      document.getElementById('lbl-samvatsaram').innerText = dict.lblSamvatsaram;
+      document.getElementById('lbl-ayanam').innerText = dict.lblAyanam;
+      document.getElementById('lbl-rithuvu').innerText = dict.lblRithuvu;
+      document.getElementById('lbl-masam').innerText = dict.lblMasam;
+      document.getElementById('lbl-paksham').innerText = dict.lblPaksham;
+      document.getElementById('lbl-thidhi').innerText = dict.lblThidhi;
+      document.getElementById('lbl-nakshatram').innerText = dict.lblNakshatram;
+      document.getElementById('btnFullPanchangam').innerText = dict.btnFullPanchangam;
+      document.getElementById('lblCurrentKala').innerText = dict.currentKala;
+
+      if (currentPanchangam) {
+        renderPanchangam(currentPanchangam);
+        populateModal(); 
+      }
+    }
+
+    function getSpecialKalas(data) {
+        if (!data || !data.kalas) return [];
+        return [
+            { id: 'brahma_muhurta', name: { en: 'Brahma Muhurta', te: 'బ్రహ్మ ముహూర్తం' }, time: data.kalas.brahma_muhurta || "---" },
+            { id: 'durmuhurta', name: { en: 'Durmuhurta', te: 'దుర్ముహూర్తం' }, time: data.kalas.durmuhurta || "---" },
+            { id: 'abhijit_muhurta', name: { en: 'Abhijit Lagnam', te: 'అభిజిత్ లగ్నం' }, time: data.kalas.abhijit_muhurta || "---" },
+            { id: 'yamaganda', name: { en: 'Yamaganda', te: 'యమగండం' }, time: data.kalas.yamaganda || "---" },
+            { id: 'gulika', name: { en: 'Gulika Kalam', te: 'గుళిక కాలం' }, time: data.kalas.gulika || "---" },
+            { id: 'amrita_kala', name: { en: 'Amrita Kalam', te: 'అమృత కాలం' }, time: data.kalas.amrita_kala || "---" },
+            { id: 'rahukalam', name: { en: 'Rahu Kalam', te: 'రాహు కాలం' }, time: data.kalas.rahukalam || "---" },
+            { id: 'varjyam', name: { en: 'Varjyam', te: 'వర్జ్యం' }, time: data.kalas.varjyam || "---" }
+        ];
+    }
+
+    async function loadPanchangam(dateStr) {
+      try {
+          const response = await fetch(`/api/panchangam?date=${dateStr}`);
+          currentPanchangam = await response.json();
+          renderPanchangam(currentPanchangam);
+      } catch (err) {
+          console.error("Error loading panchangam data.", err);
+      }
+    }
+
+    function renderPanchangam(data) {
+      if (!data) return;
+      const lang = currentLanguage;
+      
+      // Update Navbar Celestial Timings
+      document.getElementById("nav-sunrise").innerText = data.solar.sunrise;
+      document.getElementById("nav-sunset").innerText = data.solar.sunset;
+      document.getElementById("nav-moonrise").innerText = data.lunar.moonrise;
+      document.getElementById("nav-moonset").innerText = data.lunar.moonset;
+      
+      // Update Main Card
+      document.getElementById("val-samvatsaram").innerText = data.general.samvatsara[lang];
+      document.getElementById("val-ayanam").innerText = data.general.ayanam[lang];
+      document.getElementById("val-rithuvu").innerText = data.general.ritu[lang];
+      document.getElementById("val-masam").innerText = data.general.masa[lang];
+      document.getElementById("val-paksham").innerText = data.general.paksha[lang];
+      document.getElementById("val-thidhi").innerText = data.general.tithi[lang] + " " + data.general.tithi_till[lang];
+      document.getElementById("val-nakshatram").innerText = data.general.nakshatra[lang] + " " + data.general.nakshatra_till[lang];
+      document.getElementById("todayDateDisplay").textContent = data.date;
+
+      const specialKalas = getSpecialKalas(data);
+      renderKalas(specialKalas);
+      highlightCurrentKala();
+    }
+
+    function renderKalas(kalas) {
+      const outerWheel = document.getElementById('outerWheel');
+      if (!outerWheel) return;
+      const existingSpokes = outerWheel.querySelectorAll('.time-spoke');
+      existingSpokes.forEach(s => s.remove());
+
+      kalas.forEach((kala, index) => {
+        const angle = index * 45;
+        const spoke = document.createElement('div');
+        spoke.className = 'time-spoke';
+        spoke.dataset.id = kala.id;
+        spoke.style.transform = `rotate(${angle}deg)`;
+
+        const content = document.createElement('div');
+        content.className = 'upright-content';
+        content.style.transform = `rotate(-${angle}deg)`;
+
+        const title = document.createElement('span');
+        title.className = 'label-title';
+        
+        // Split names if they are 2 words long
+        let rawName = kala.name[currentLanguage];
+        let nameParts = rawName.split(' ');
+        if(nameParts.length === 2) {
+            title.innerHTML = nameParts[0] + '<br>' + nameParts[1];
+        } else if (nameParts.length > 2) {
+            title.innerHTML = nameParts[0] + '<br>' + nameParts.slice(1).join(' ');
+        } else {
+            title.innerText = rawName;
+        }
+
+        const time = document.createElement('span');
+        time.className = 'label-time';
+        time.innerHTML = kala.time.split(' / ').join('<br>'); 
+
+        content.appendChild(title);
+        content.appendChild(time);
+        spoke.appendChild(content);
+        outerWheel.appendChild(spoke);
+      });
+    }
+
+    function parseKalaTime(timeStr) {
+      if (!timeStr || timeStr === "---") return new Date();
+      const [time, modifier] = timeStr.trim().split(' ');
+      if (!time || !modifier) return new Date();
+      let [hours, minutes] = time.split(':');
+      hours = parseInt(hours, 10);
+      if (hours === 12) hours = 0;
+      if (modifier === 'PM') hours += 12;
+      const d = new Date();
+      d.setHours(hours, parseInt(minutes, 10), 0, 0);
+      return d;
+    }
+
+    function checkTimeInRange(now, startStr, endStr) {
+        if(!startStr || !endStr) return false;
+        let start = parseKalaTime(startStr);
+        let end = parseKalaTime(endStr);
+        if (end < start) {
+           if (now < end) start.setDate(start.getDate() - 1);
+           else end.setDate(end.getDate() + 1);
+        }
+        return now >= start && now < end;
+    }
+
+    function highlightCurrentKala() {
+      if (!currentPanchangam) return;
+
+      const now = new Date();
+      let activeKala = null;
+      const kalas = getSpecialKalas(currentPanchangam);
+
+      for (let i = 0; i < kalas.length; i++) {
+        const kala = kalas[i];
+        if (!kala.time || kala.time === "---") continue;
+        const periods = kala.time.split(' / ');
+        let isActive = false;
+        for (let p of periods) {
+            let parts = p.split(' – ').length === 2 ? p.split(' – ') : p.split(' - ');
+            if(parts.length === 2 && checkTimeInRange(now, parts[0], parts[1])) {
+                isActive = true;
+                break;
+            }
+        }
+        if (isActive) {
+           activeKala = kala;
+           break;
+        }
+      }
+
+      document.querySelectorAll('.time-spoke').forEach(spoke => spoke.classList.remove('active-kala'));
+      document.querySelectorAll('.kala-item').forEach(item => item.classList.remove('active-modal-kala'));
+
+      const viewedDate = document.getElementById("selectedDate").value;
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const todayStr = `${y}-${m}-${day}`;
+      const isToday = viewedDate === todayStr;
+
+      if (activeKala && isToday) {
+        const activeSpoke = document.querySelector(`.time-spoke[data-id="${activeKala.id}"]`);
+        if (activeSpoke) activeSpoke.classList.add('active-kala');
+        
+        const activeModalItem = document.getElementById(`modal-kala-${activeKala.id}`);
+        if (activeModalItem) activeModalItem.classList.add('active-modal-kala');
+
+        // Split inner wheel text to perfectly fit inside the inner circle constraint
+        let activeName = activeKala.name[currentLanguage];
+        let activeParts = activeName.split(' ');
+        if(activeParts.length === 2) {
+            document.getElementById('centerKalaName').innerHTML = activeParts[0] + '<br>' + activeParts[1];
+        } else if (activeParts.length > 2) {
+            document.getElementById('centerKalaName').innerHTML = activeParts[0] + '<br>' + activeParts.slice(1).join(' ');
+        } else {
+            document.getElementById('centerKalaName').innerText = activeName;
+        }
+
+        let displayTime = activeKala.time.split(' / ').join('\n');
+        const periods = activeKala.time.split(' / ');
+        for (let p of periods) {
+            let parts = p.split(' – ').length === 2 ? p.split(' – ') : p.split(' - ');
+            if (parts.length === 2 && checkTimeInRange(now, parts[0], parts[1])) {
+                displayTime = p;
+                break;
+            }
+        }
+        document.getElementById('centerKalaTime').innerText = displayTime;
+      } else {
+        document.getElementById('centerKalaName').innerText = isToday ? "---" : "Viewing";
+        document.getElementById('centerKalaTime').innerText = isToday ? "No Active Kala" : "Different Day";
+      }
+      updateKalaTheme();
+    }
+
+    function updateKalaTheme() {
+      const dict = i18n[currentLanguage];
+      const bgMorning = document.getElementById('bgMorning');
+      const bgAfternoon = document.getElementById('bgAfternoon');
+      const bgEvening = document.getElementById('bgEvening');
+      const bgNight = document.getElementById('bgNight');
+      const greetingHeading = document.getElementById('greetingHeading');
+      const navbar = document.getElementById('mainNavbar');
+      const bookCard = document.getElementById('panchangamCard');
+
+      bgMorning.classList.remove('active');
+      bgAfternoon.classList.remove('active');
+      bgEvening.classList.remove('active');
+      bgNight.classList.remove('active');
+
+      const hour = new Date().getHours();
+      if (hour >= 5 && hour < 12) {
+          bgMorning.classList.add('active'); navbar.classList.add('day-theme'); navbar.classList.remove('night-theme'); bookCard.classList.add('day-theme'); bookCard.classList.remove('night-theme'); greetingHeading.innerText = dict.goodMorning;
+      } else if (hour >= 12 && hour < 17) {
+          bgAfternoon.classList.add('active'); navbar.classList.add('day-theme'); navbar.classList.remove('night-theme'); bookCard.classList.add('day-theme'); bookCard.classList.remove('night-theme'); greetingHeading.innerText = dict.goodAfternoon;
+      } else if (hour >= 17 && hour < 20) {
+          bgEvening.classList.add('active'); navbar.classList.add('night-theme'); navbar.classList.remove('day-theme'); bookCard.classList.add('night-theme'); bookCard.classList.remove('day-theme'); greetingHeading.innerText = dict.goodEvening;
+      } else {
+          bgNight.classList.add('active'); navbar.classList.add('night-theme'); navbar.classList.remove('day-theme'); bookCard.classList.add('night-theme'); bookCard.classList.remove('day-theme'); greetingHeading.innerText = dict.goodNight;
+      }
+    }
+
+    function startKalaTimer() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(highlightCurrentKala, 60000); 
+    }
+
+    function startRealTimeClock() {
+        function updateClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const clockEl = document.getElementById('clockTime');
+            if(clockEl) clockEl.innerText = timeStr;
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+    }
+
+    // Modal Scaling Logic
+    function scaleCanvas() {
+        const wrapper = document.getElementById('canvas-wrapper');
+        const splash = document.getElementById('splash-screen');
+        const targetWidth = 1672;
+        const targetHeight = 941;
+        const scaleX = window.innerWidth / targetWidth;
+        const scaleY = window.innerHeight / targetHeight;
+        const scale = Math.min(scaleX, scaleY);
+        wrapper.style.transform = `scale(${scale})`;
+        splash.style.transform = `scale(${scale})`;
+    }
+
+    window.addEventListener('resize', scaleCanvas);
+    window.addEventListener("DOMContentLoaded", async () => {
+      scaleCanvas();
+      const today = new Date().toISOString().split("T")[0];
+      document.getElementById("selectedDate").value = today;
+      await loadPanchangam(today);
+      startKalaTimer();
+      startRealTimeClock();
+    });
+
+    document.getElementById("selectedDate").addEventListener("change", async (e) => {
+      await loadPanchangam(e.target.value);
+    });
+
+    // --- Modal Logic & WebP Navigation ---
+    
+    function populateModal() {
+        if(!currentPanchangam) return;
+        const data = currentPanchangam;
+        const lang = currentLanguage;
+        const specialKalas = getSpecialKalas(data);
+        const kalasHtml = specialKalas.map(k => `
+            <div class="kala-item" id="modal-kala-${k.id}">
+                <span class="kala-name">${k.name[lang]}</span>
+                <span>${k.time.split(' / ').join('<br>')}</span>
+            </div>
+        `).join('');
+
+        let panchangamLeftPageHeading, sunriseLabel, sunsetLabel, monriseLabel, moonsetLabel;
+
+        if(currentLanguage === 'te') {
+          panchangamLeftPageHeading = "సమయాలు";
+          sunriseLabel = "సూర్యోదయం";
+          sunsetLabel = "సూర్యాస్తమయం";
+          monriseLabel = "చంద్రోదయం";
+          moonsetLabel = "చంద్రాస్తమయం";
+        }else{
+          panchangamLeftPageHeading = "Timings & Kalas";
+          sunriseLabel = "Sunrise";
+          sunsetLabel = "Sunset";
+          monriseLabel = "Moonrise";
+          moonsetLabel = "Moonset";
+        }
+
+        document.getElementById("panchangamLeftPage").innerHTML = `
+        <div style="text-align:center; color: #800000; font-weight: 900; margin-bottom: 5px; font-size: 16px;">${data.date}</div>
+        <h2 style="color: #5a3d06; text-align: center; margin-bottom: 10px; border-bottom: 2px solid #d4af37; padding-bottom: 5px;">${panchangamLeftPageHeading}</h2>
+        <table class="book-table" style="margin-bottom: 15px;">
+            <tr><td>${sunriseLabel}</td><td>${data.solar.sunrise}</td></tr>
+            <tr><td>${sunsetLabel}</td><td>${data.solar.sunset}</td></tr>
+            <tr><td>${monriseLabel}</td><td>${data.lunar.moonrise}</td></tr>
+            <tr><td>${moonsetLabel}</td><td>${data.lunar.moonset}</td></tr>
+        </table>
+        <div class="kala-grid">${kalasHtml}</div>
+        `;
+
+        document.getElementById("panchangamRightPage").innerHTML = `
+        <div style="text-align:center; color: #800000; font-weight: 900; margin-bottom: 5px; font-size: 16px;">${data.date}</div>
+        <h2 style="color: #5a3d06; text-align: center; margin-bottom: 10px; border-bottom: 2px solid #d4af37; padding-bottom: 5px;">Panchangam Details</h2>
+        <table class="book-table">
+            <tr><td>Samvatsaram</td><td>${data.general.samvatsara[lang]}</td></tr>
+            <tr><td>Ayanam</td><td>${data.general.ayanam[lang]}</td></tr>
+            <tr><td>Rithuvu</td><td>${data.general.ritu[lang]}</td></tr>
+            <tr><td>Masam</td><td>${data.general.masa[lang]}</td></tr>
+            <tr><td>Paksham</td><td>${data.general.paksha[lang]}</td></tr>
+            <tr><td>Thidhi</td><td>${data.general.tithi[lang] + " " + data.general.tithi_till[lang]}</td></tr>
+            <tr><td>Nakshatram</td><td>${data.general.nakshatra[lang] + " " + data.general.nakshatra_till[lang]}</td></tr>
+            <tr><td>Yogam</td><td>${data.general.yoga[lang] + " " + data.general.yoga_till[lang]}</td></tr>
+            <tr><td>Karanam</td><td>${data.general.karana[lang] + " " + data.general.karana_till[lang]}</td></tr>
+        </table>
+        `;
+        highlightCurrentKala();
+    }
+
+    document.getElementById("btnFullPanchangam").addEventListener("click", () => {
+        document.getElementById("panchangamModal").style.display = "flex";
+        document.getElementById("panchangamLeftPage").style.opacity = '0';
+        document.getElementById("panchangamRightPage").style.opacity = '0';
+        
+        const splash = document.getElementById('splash-screen');
+        
+        splash.style.backgroundImage = `url('/static/PanchangamOpening.webp?v=${new Date().getTime()}')`;
+        
+        splash.style.display = 'block';
+        splash.style.opacity = '1';
+
+        setTimeout(() => {
+            splash.style.opacity = '0';
+            setTimeout(() => {
+                splash.style.display = 'none';
+                const wrapper = document.getElementById('canvas-wrapper');
+                wrapper.style.backgroundImage = "url('/static/PanchangamOpenFull.webp')";
+                populateModal();
+                document.getElementById('panchangamLeftPage').style.opacity = '1';
+                document.getElementById('panchangamRightPage').style.opacity = '1';
+                isOpeningComplete = true;
+            }, 10); 
+        }, 7000); 
+    });
+
+    async function navigateModalDay(offset) {
+        if (!isOpeningComplete && offset !== 0) return;
+
+        if (currentTimeout) {
+            clearTimeout(currentTimeout);
+            currentTimeout = null;
+        }
+
+        let currentDateStr = document.getElementById("selectedDate").value;
+        if (!currentDateStr) return;
+        let d = new Date(currentDateStr);
+        d.setDate(d.getDate() + offset);
+        
+        let y = d.getFullYear();
+        let m = String(d.getMonth() + 1).padStart(2, '0');
+        let day = String(d.getDate()).padStart(2, '0');
+        let newDateStr = `${y}-${m}-${day}`;
+        
+        document.getElementById("selectedDate").value = newDateStr;
+
+        const wrapper = document.getElementById('canvas-wrapper');
+        const leftBox = document.getElementById('panchangamLeftPage');
+        const rightBox = document.getElementById('panchangamRightPage');
+        
+        document.querySelectorAll('.btn-time').forEach(btn => btn.classList.remove('active'));
+
+        let transitionImage = '';
+        if (offset === -1) {
+            transitionImage = '/static/PagesRightToLeft.webp';
+            document.getElementById('btn-yesterday').classList.add('active');
+        } else if (offset === 1) {
+            transitionImage = '/static/PagesLeftToRight.webp';
+            document.getElementById('btn-tomorrow').classList.add('active');
+        } else {
+            document.getElementById('btn-today').classList.add('active');
+        }
+
+        leftBox.style.opacity = '0';
+        rightBox.style.opacity = '0';
+
+        await loadPanchangam(newDateStr);
+
+        if (transitionImage !== '') {
+            wrapper.style.backgroundImage = `url('${transitionImage}?v=${new Date().getTime()}')`;
+            
+            currentTimeout = setTimeout(() => {
+                wrapper.style.backgroundImage = "url('/static/PanchangamOpenFull.webp')";
+                populateModal();
+                leftBox.style.opacity = '1';
+                rightBox.style.opacity = '1';
+                currentTimeout = null;
+            }, 4500); 
+        } else {
+            wrapper.style.backgroundImage = "url('/static/PanchangamOpenFull.webp')";
+            populateModal();
+            leftBox.style.opacity = '1';
+            rightBox.style.opacity = '1';
+            currentTimeout = null;
+        }
+    }
+
+    document.getElementById("closeModal").onclick = function() {
+        document.getElementById("panchangamModal").style.display = "none";
+        isOpeningComplete = false;
+        if (currentTimeout) {
+            clearTimeout(currentTimeout);
+            currentTimeout = null;
+        }
+    };
+  </script>
+</body>
+</html>

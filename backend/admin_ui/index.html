@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Yagnika Admin</title>
+<style>
+  :root { --red:#960C0C; --dark:#5E0000; --gold:#FFB800; --ink:#1F2937; --line:#E5E7EB; --bg:#FAF6ED; --ok:#16A34A; --bad:#DC2626; --amber:#B45309; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--red); color:#fff; padding:14px 20px; display:flex; align-items:center; gap:12px; }
+  header .logo { width:34px;height:34px;border-radius:9px;background:var(--gold);color:var(--dark);font-weight:800;display:grid;place-items:center; }
+  header h1 { font-size:16px; margin:0; flex:1; }
+  header .who { font-size:12px; opacity:.85; margin-right:6px; }
+  header button { background:rgba(255,255,255,.15); color:#fff; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+  main { max-width:1180px; margin:0 auto; padding:20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; }
+  .login { max-width:380px; margin:60px auto; }
+  .login h2 { margin:0 0 4px; }
+  .login p { margin:0 0 20px; color:#6B7280; font-size:13px; }
+  label { display:block; font-size:12px; font-weight:700; color:#6B7280; margin:12px 0 6px; }
+  input { width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:9px; font-size:14px; }
+  .btn { background:var(--dark); color:#fff; border:0; padding:12px 16px; border-radius:9px; font-weight:800; cursor:pointer; font-size:14px; }
+  .btn:disabled { opacity:.6; cursor:default; }
+  .btn.ghost { background:#F3F4F6; color:#374151; }
+  .btn.ok { background:var(--ok); }
+  .btn.bad { background:var(--bad); }
+  .btn.amber { background:var(--amber); }
+  .btn.sm { padding:7px 11px; font-size:12px; border-radius:7px; }
+  .err { background:#FEF2F2; color:var(--bad); border:1px solid #FEE2E2; padding:10px 12px; border-radius:9px; font-size:13px; margin-top:12px; }
+  .notif { background:#FEF3C7; border:1px solid #FDE68A; color:#92400E; padding:12px 16px; border-radius:12px; font-weight:700; font-size:14px; margin-bottom:14px; display:flex; align-items:center; gap:10px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+  .tabs button { background:#fff; border:1px solid var(--line); padding:9px 14px; border-radius:20px; cursor:pointer; font-weight:700; font-size:13px; }
+  .tabs button.on { background:var(--gold); border-color:var(--gold); color:var(--dark); }
+  .stats { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+  .stat { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .stat b { display:block; font-size:22px; line-height:1.1; }
+  .stat span { font-size:10.5px; color:#6B7280; text-transform:uppercase; letter-spacing:.5px; }
+  .stat.hot { border-color:#FDE68A; background:#FFFBEB; }
+  .stat .sub { font-size:11px; color:#6B7280; margin-top:3px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#6B7280; }
+  tr:hover td { background:#FCFBF7; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:800; }
+  .pill.pending, .pill.submitted { background:#FEF3C7; color:#92400E; }
+  .pill.interview { background:#DBEAFE; color:#1E40AF; }
+  .pill.approved, .pill.on { background:#D1FAE5; color:#065F46; }
+  .pill.rejected { background:#FEE2E2; color:#991B1B; }
+  .pill.off { background:#F3F4F6; color:#6B7280; }
+  .steps { display:flex; gap:4px; align-items:center; font-size:10.5px; font-weight:700; color:#9CA3AF; white-space:nowrap; }
+  .steps .s { padding:2px 6px; border-radius:6px; background:#F3F4F6; }
+  .steps .s.done { background:#D1FAE5; color:#065F46; }
+  .steps .s.cur { background:#B45309; color:#fff; }
+  .muted { color:#6B7280; }
+  .row-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  dialog { border:0; border-radius:14px; padding:0; max-width:640px; width:92%; }
+  dialog .dlg { padding:20px; }
+  dialog h3 { margin:0 0 12px; }
+  dialog .kv { display:grid; grid-template-columns:150px 1fr; gap:6px 12px; font-size:13px; }
+  dialog .kv div:nth-child(odd) { color:#6B7280; font-weight:700; }
+  dialog .close { float:right; cursor:pointer; border:0; background:#F3F4F6; border-radius:8px; padding:6px 10px; }
+  a.proof { color:var(--red); font-weight:700; cursor:pointer; }
+  .empty { text-align:center; color:#6B7280; padding:40px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<dialog id="detail"><div class="dlg">
+  <button class="close" onclick="document.getElementById('detail').close()">Close</button>
+  <h3 id="d-name"></h3>
+  <div class="kv" id="d-kv"></div>
+</div></dialog>
+
+<script>
+const API = ''; // same origin
+let token = sessionStorage.getItem('yagnika_admin_token') || '';
+let tab = 'approvals';
+let STATS = {};
+
+function h(html){ document.getElementById('app').innerHTML = html; }
+async function api(path, opts={}) {
+  const r = await fetch(API + '/api' + path, {
+    ...opts,
+    headers: { 'Content-Type':'application/json', ...(token ? {Authorization:'Bearer '+token} : {}), ...(opts.headers||{}) },
+  });
+  if (!r.ok) {
+    let msg = 'Request failed';
+    try { const b = await r.json(); msg = typeof b.detail === 'string' ? b.detail : JSON.stringify(b.detail); } catch {}
+    if (r.status === 401) { token=''; sessionStorage.removeItem('yagnika_admin_token'); renderLogin(msg); }
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function renderLogin(err) {
+  h(`<main><div class="card login">
+    <h2>Yagnika Admin</h2><p>Sign in with your administrator credentials.</p>
+    <label>Username</label><input id="u" value="" autocomplete="username" />
+    <label>Password</label><input id="p" type="password" value="" placeholder="••••••••" autocomplete="current-password" />
+    <div style="margin-top:16px"><button class="btn" style="width:100%" onclick="doLogin()">Sign In</button></div>
+    ${err ? `<div class="err">${esc(err)}</div>` : ''}
+  </div></main>`);
+  document.getElementById('p').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+}
+async function doLogin() {
+  const username = document.getElementById('u').value.trim();
+  const password = document.getElementById('p').value;
+  try {
+    const d = await api('/admin/login', { method:'POST', body: JSON.stringify({ username, password }) });
+    token = d.access_token; sessionStorage.setItem('yagnika_admin_token', token);
+    renderShell(); loadStats(); loadTab();
+  } catch (e) { renderLogin(e.message); }
+}
+function logout(){ token=''; sessionStorage.removeItem('yagnika_admin_token'); renderLogin(); }
+
+function renderShell() {
+  h(`<header>
+      <div class="logo">Y</div><h1>Yagnika Admin</h1>
+      <span class="who">Administrator</span>
+      <button onclick="logout()">Log out</button>
+    </header>
+    <main>
+      <div id="notif"></div>
+      <div class="stats" id="stats"></div>
+      <div class="tabs">
+        <button data-t="approvals">Priest Approvals</button>
+        <button data-t="priests">All Priests</button>
+        <button data-t="customers">All Customers</button>
+        <button data-t="bookings">Bookings</button>
+      </div>
+      <div class="card" id="panel"><div class="empty">Loading…</div></div>
+    </main>`);
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; loadTab(); });
+}
+async function loadStats() {
+  try {
+    const s = await api('/admin/stats');
+    STATS = s;
+    const notif = document.getElementById('notif');
+    if (notif) notif.innerHTML = s.reg_pending > 0
+      ? `<div class="notif">🔔 ${s.reg_pending} priest registration${s.reg_pending===1?'':'s'} awaiting your review
+          &nbsp;·&nbsp; ${s.reg_submitted} at details, ${s.reg_interview} at interview
+          &nbsp; <button class="btn sm amber" onclick="tab='approvals';setTabButtons();loadTab()">Open queue</button></div>`
+      : '';
+    document.getElementById('stats').innerHTML = `
+      <div class="stat"><b>${s.panchangam_views}</b><span>Yagnika Panchangam clicks</span><div class="sub">yagnika.in</div></div>
+      <div class="stat hot"><b>${s.reg_pending}</b><span>Pending approvals</span><div class="sub">${s.reg_submitted} details · ${s.reg_interview} interview</div></div>
+      <div class="stat"><b>${s.users_total}</b><span>Total app users</span><div class="sub">${s.priests} priests · ${s.devotees} customers</div></div>
+      <div class="stat"><b>${s.priests_active}/${s.priests}</b><span>Priests active</span><div class="sub">${s.priests_inactive} inactive</div></div>
+      <div class="stat"><b>${s.devotees_active}/${s.devotees}</b><span>Customers active</span><div class="sub">${s.devotees_inactive} inactive</div></div>
+      <div class="stat"><b>${s.bookings_total}</b><span>Bookings total</span></div>
+      <div class="stat"><b>${s.bookings_pending}</b><span>Bookings pending</span></div>
+      <div class="stat"><b>${s.bookings_assigned}</b><span>Bookings in progress</span></div>
+      <div class="stat"><b>${s.bookings_completed}</b><span>Bookings completed</span></div>
+      <div class="stat"><b>${s.bookings_rejected}</b><span>Declined by a priest</span></div>`;
+  } catch {}
+}
+function setTabButtons(){ document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === tab)); }
+
+async function loadTab() {
+  setTabButtons();
+  const panel = document.getElementById('panel');
+  panel.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    if (tab === 'approvals') return renderRegs(await api('/admin/priest-registrations?status=pending'));
+    if (tab === 'priests') {
+      const [all, reviewed] = await Promise.all([
+        api('/admin/priests'),
+        api('/admin/priest-registrations'),
+      ]);
+      return renderPriests(all, reviewed);
+    }
+    if (tab === 'customers') return renderUsers(await api('/admin/devotees'), 'customer');
+    if (tab === 'bookings') return renderBookings(await api('/admin/bookings'));
+  } catch (e) { panel.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+let REGS = {};
+function stepBar(stage) {
+  const order = ['submitted','interview','approved'];
+  const at = order.indexOf(stage === 'rejected' ? 'approved' : stage);
+  const label = ['1 Details','2 Interview','3 Approve'];
+  return `<div class="steps">${label.map((l,i) =>
+    `<span class="s ${i<at?'done':i===at?'cur':''}">${l}</span>${i<2?'›':''}`).join('')}</div>`;
+}
+function renderRegs(rows) {
+  REGS = Object.fromEntries(rows.map(r => [r.id, r]));
+  const panel = document.getElementById('panel');
+  if (!rows.length) { panel.innerHTML = `<div class="empty">No registrations are waiting for review. 🎉</div>`; return; }
+  panel.innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Contact</th><th>Type</th><th>Svc</th><th>Aadhaar</th><th>3-step stage</th><th></th>
+    </tr></thead><tbody>${rows.map(r => {
+      const stage = r.stage || 'submitted';
+      return `<tr>
+        <td><b>${esc(r.name)}</b><br><span class="muted">${esc(r.email)}</span></td>
+        <td>${esc(r.mobile)}<br><span class="muted">${esc(String(r.address||'')).slice(0,40)}</span></td>
+        <td>${esc(r.priest_type || '-')}${r.temple_name ? '<br><span class="muted">'+esc(r.temple_name)+'</span>' : ''}</td>
+        <td>${(r.services||[]).length}</td>
+        <td>${r.aadhaar_proof ? `<a class="proof" onclick="viewProof('${r.id}')">View proof</a>` : '<span class="muted">none</span>'}<br><span class="muted">${esc(r.aadhaar_number||'')}</span></td>
+        <td>${stepBar(stage)}<br><span class="pill ${stage}">${esc(stage)}</span></td>
+        <td><div class="row-actions">
+          <button class="btn sm ghost" onclick="showDetail('${r.id}')">Details</button>
+          ${stage === 'submitted' ? `<button class="btn sm amber" onclick="setStage('${r.id}','interview')">Move to Interview →</button>` : ''}
+          ${stage === 'interview' ? `<button class="btn sm ghost" onclick="setStage('${r.id}','submitted')">← Back to Details</button>` : ''}
+          <button class="btn sm ok" onclick="review('${r.id}','approve')">Approve</button>
+          <button class="btn sm bad" onclick="review('${r.id}','reject')">Reject</button>
+        </div></td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+async function setStage(id, stage) {
+  try { await api(`/admin/priest-registrations/${id}/stage`, { method:'POST', body: JSON.stringify({ stage }) }); loadTab(); loadStats(); }
+  catch (e) { alert(e.message); }
+}
+async function review(id, action) {
+  const note = action === 'reject' ? (prompt('Reason for rejection (optional):') || '') : (prompt('Approval note (optional):') || '');
+  try {
+    await api(`/admin/priest-registrations/${id}/${action}`, { method:'POST', body: JSON.stringify({ note }) });
+    loadTab(); loadStats();
+  } catch (e) { alert(e.message); }
+}
+function showDetail(id) {
+  const r = REGS[id]; if (!r) return;
+  document.getElementById('d-name').textContent = r.name;
+  const fields = [
+    ['Stage', r.stage], ['Status', r.status],
+    ['Email', r.email], ['Mobile', r.mobile], ['Alt mobile', r.alt_mobile], ['Alt email', r.optional_email],
+    ['Address', r.address], ['Date of birth', r.date_of_birth], ['Aadhaar number', r.aadhaar_number],
+    ['Sampradaya', r.sampradaya], ['Agama', r.agama], ['Veda', r.veda], ['Sutra', r.sutra],
+    ['Gotra', r.gotra], ['Pravara', r.pravara], ['Abhivadanam', r.abhivadanam],
+    ['Experience (yrs)', r.years_of_experience], ['Languages', (r.languages||[]).join(', ')],
+    ['Priest type', r.priest_type], ['Temple', r.temple_name], ['Temple address', r.temple_address],
+    ['Temple deity', r.temple_deity], ['Designation', r.temple_designation],
+    ['Certifications', r.certifications], ['Agama cert', r.agama_certification],
+    ['Veda patashala', r.veda_patashala], ['Guru', r.guru_name], ['Awards', r.awards],
+    ['Availability', r.availability], ['Working status', r.working_status],
+    ['Services selected', (r.services||[]).length], ['Registered at', r.registered_at],
+    ['Reviewed at', r.reviewed_at], ['Review note', r.review_note],
+  ];
+  document.getElementById('d-kv').innerHTML = fields
+    .filter(([,v]) => v !== undefined && v !== null && v !== '')
+    .map(([k,v]) => `<div>${esc(k)}</div><div>${esc(v)}</div>`).join('')
+    + (r.aadhaar_proof ? `<div>Aadhaar proof</div><div><a class="proof" onclick="viewProof('${r.id}')">Open</a></div>` : '');
+  document.getElementById('detail').showModal();
+}
+function viewProof(id) {
+  const r = REGS[id]; if (!r || !r.aadhaar_proof) return;
+  const w = window.open('', '_blank');
+  const isPdf = r.aadhaar_proof.startsWith('data:application/pdf');
+  w.document.write(isPdf
+    ? `<iframe src="${r.aadhaar_proof}" style="border:0;width:100%;height:100vh"></iframe>`
+    : `<img src="${r.aadhaar_proof}" style="max-width:100%">`);
+  w.document.title = (r.name || 'Aadhaar') + ' — proof';
+}
+
+function renderPriests(priests, regs) {
+  REGS = Object.fromEntries(regs.map(r => [r.user_id, r]));
+  const panel = document.getElementById('panel');
+  if (!priests.length) { panel.innerHTML = '<div class="empty">No priests.</div>'; return; }
+  panel.innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Email</th><th>Mobile</th><th>Approval</th><th>Account</th><th></th>
+    </tr></thead><tbody>${priests.map(p => {
+      const st = p.approval_status || '—';
+      return `<tr>
+        <td><b>${esc(p.name)}</b></td>
+        <td>${esc(p.email)}</td>
+        <td>${esc(p.mobile)}</td>
+        <td>${st === '—' ? '<span class="muted">—</span>' : `<span class="pill ${st}">${esc(st)}</span>`}</td>
+        <td><span class="pill ${p.is_active ? 'on' : 'off'}">${p.is_active ? 'active' : 'inactive'}</span></td>
+        <td><div class="row-actions">
+          ${REGS[p.id] ? `<button class="btn sm ghost" onclick="showDetail('${REGS[p.id].id}')">Details</button>` : ''}
+          <button class="btn sm ${p.is_active ? 'bad' : 'ok'}" onclick="toggleUser('${p.id}', ${!p.is_active})">${p.is_active ? 'Disable' : 'Enable'}</button>
+        </div></td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+function renderUsers(users, kind) {
+  const panel = document.getElementById('panel');
+  if (!users.length) { panel.innerHTML = `<div class="empty">No ${kind}s.</div>`; return; }
+  panel.innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Email</th><th>Mobile</th><th>Account</th><th></th>
+    </tr></thead><tbody>${users.map(u => `
+      <tr>
+        <td><b>${esc(u.name)}</b></td>
+        <td>${esc(u.email)}</td>
+        <td>${esc(u.mobile)}</td>
+        <td><span class="pill ${u.is_active ? 'on' : 'off'}">${u.is_active ? 'active' : 'inactive'}</span></td>
+        <td><button class="btn sm ${u.is_active ? 'bad' : 'ok'}" onclick="toggleUser('${u.id}', ${!u.is_active})">${u.is_active ? 'Disable' : 'Enable'}</button></td>
+      </tr>`).join('')}</tbody></table>`;
+}
+async function toggleUser(id, active) {
+  try { await api(`/admin/users/${id}/active`, { method:'PATCH', body: JSON.stringify({ is_active: active }) }); loadTab(); loadStats(); }
+  catch (e) { alert(e.message); }
+}
+
+function renderBookings(rows) {
+  const panel = document.getElementById('panel');
+  if (!rows.length) { panel.innerHTML = '<div class="empty">No bookings yet.</div>'; return; }
+  panel.innerHTML = `<table><thead><tr>
+      <th>Pooja</th><th>Devotee</th><th>Date / time</th><th>Priest</th><th>Status</th><th>Declined by</th>
+    </tr></thead><tbody>${rows.map(b => `
+      <tr>
+        <td><b>${esc(b.pooja_name)}</b></td>
+        <td>${esc(b.user_name)}<br><span class="muted">${esc(b.user_mobile||'')}</span></td>
+        <td>${esc(b.booking_date)}<br><span class="muted">${esc(b.booking_time)}</span></td>
+        <td>${b.priest_name ? esc(b.priest_name) : '<span class="muted">—</span>'}</td>
+        <td>${esc(b.status)}</td>
+        <td>${(b.rejected_by||[]).length}</td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+// boot
+if (token) { renderShell(); loadStats(); loadTab(); } else { renderLogin(); }
+</script>
+</body>
+</html>

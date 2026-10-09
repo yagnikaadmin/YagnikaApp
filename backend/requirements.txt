@@ -10,6 +10,10 @@ passlib>=1.7.4
 python-jose>=3.3.0
 python-multipart>=0.0.9
 
+# panchangam computation (ported from the standalone Yagnika Panchangam service)
+pyswisseph-rs==0.1.0
+astral==3.2
+
 # test suite (tests/test_scenarios.py)
 pytest>=8.0.0
 requests>=2.31.0

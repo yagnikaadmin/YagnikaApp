@@ -5,36 +5,40 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { colors, radius } from '@/src/theme';
 import { useAuth } from '@/src/context/AuthContext';
 import { poojaImageFor } from '@/src/utils/poojaImages';
+import LanguagePicker from '@/src/components/LanguagePicker';
 
 const BANNER_IMG: Record<string, string> = {
   priest: poojaImageFor('p3'),
-  admin: poojaImageFor('p6'),
   devotee: poojaImageFor('p4'),
 };
 
 export default function Login() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { role: roleParam } = useLocalSearchParams<{ role?: string }>();
-  const role = roleParam === 'priest' ? 'priest' : roleParam === 'admin' ? 'admin' : 'devotee';
-  const roleLabel = role === 'priest' ? 'Priest' : role === 'admin' ? 'Admin' : 'Devotee';
+  const role = roleParam === 'priest' ? 'priest' : 'devotee';
+  const roleLabel = role === 'priest' ? 'Priest' : 'Devotee';
   const bannerUri = BANNER_IMG[role];
   const { login } = useAuth();
-  const [email, setEmail] = useState(role === 'admin' ? 'admin@yagnika.com' : '');
-  const [password, setPassword] = useState(role === 'admin' ? 'Admin@123' : '');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    if (!email.trim() || !password) return setError('Please enter email and password');
+    if (!email.trim() || !password) return setError(t('login.enterBoth'));
     setError(''); setBusy(true);
     try {
       const u = await login(email.trim().toLowerCase(), password, role);
-      if (u.role === 'priest') router.replace('/priest-dashboard');
-      else if (u.role === 'admin') router.replace('/admin-dashboard');
-      else router.replace('/(devotee)/dashboard');
+      if (u.role === 'priest') {
+        router.replace(u.approval_status && u.approval_status !== 'approved' ? '/priest-pending' : '/priest-dashboard');
+      } else {
+        router.replace('/(devotee)/dashboard');
+      }
     } catch (e: any) {
       setError(e.message || 'Login failed');
     } finally { setBusy(false); }
@@ -43,13 +47,15 @@ export default function Login() {
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']} testID="login-screen">
       <View style={styles.banner}>
-        <Image source={{ uri: bannerUri }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
-        <LinearGradient colors={['rgba(0,0,0,0.15)', 'rgba(255,255,255,0.97)']} style={StyleSheet.absoluteFillObject} />
+        <Image source={{ uri: bannerUri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+        <LinearGradient colors={['rgba(0,0,0,0.15)', 'rgba(255,255,255,0.97)']} style={StyleSheet.absoluteFill} />
         <View style={styles.headerBar}>
           <Pressable testID="btn-login-back" onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="arrow-back" size={20} color={colors.darkRed} />
           </Pressable>
-          <Text style={styles.headerTitle}>{roleLabel} Login</Text>
+          <Text style={styles.headerTitle}>{t('login.roleTitle', { role: roleLabel })}</Text>
+          <View style={{ flex: 1 }} />
+          <LanguagePicker tint={colors.darkRed} compact />
         </View>
       </View>
 
@@ -57,40 +63,36 @@ export default function Login() {
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.iconBadge}>
             <Ionicons
-              name={roleParam === 'priest' ? 'business' : roleParam === 'admin' ? 'shield-checkmark' : 'hand-left'}
+              name={role === 'priest' ? 'business' : 'hand-left'}
               size={30}
-              color={roleParam === 'admin' ? colors.navy : roleParam === 'priest' ? colors.gold : colors.deepRed}
+              color={role === 'priest' ? colors.gold : colors.deepRed}
             />
           </View>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to continue your sacred journey</Text>
+          <Text style={styles.title}>{t('login.title')}</Text>
+          <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
 
           {error ? <Text style={styles.error} testID="login-error">{error}</Text> : null}
 
           <View style={styles.field}>
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>{t('login.email')}</Text>
             <TextInput testID="input-login-email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholder="you@example.com" style={styles.input} placeholderTextColor={colors.gray400} />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput testID="input-login-password" value={password} onChangeText={setPassword} secureTextEntry placeholder="Enter password" style={styles.input} placeholderTextColor={colors.gray400} />
+            <Text style={styles.label}>{t('login.password')}</Text>
+            <TextInput testID="input-login-password" value={password} onChangeText={setPassword} secureTextEntry placeholder="••••••••" style={styles.input} placeholderTextColor={colors.gray400} />
           </View>
 
           <Pressable testID="btn-login-submit" onPress={submit} disabled={busy} style={({ pressed }) => [styles.cta, (pressed || busy) && { opacity: 0.85 }]}>
-            <Text style={styles.ctaText}>{busy ? 'Signing in...' : 'Sign In'}</Text>
+            <Text style={styles.ctaText}>{busy ? t('login.signingIn') : t('login.signIn')}</Text>
           </Pressable>
 
-          {roleParam !== 'admin' && (
-            <>
-              <Pressable testID="btn-forgot-password" onPress={() => router.push(`/forgot-password?role=${roleParam || 'devotee'}`)} style={{ alignItems: 'center', paddingVertical: 10 }}>
-                <Text style={styles.linkText}>Forgot password?</Text>
-              </Pressable>
-              <Pressable onPress={() => router.push(roleParam === 'priest' ? '/priest-register' : '/register')} style={{ alignItems: 'center', paddingVertical: 4 }}>
-                <Text style={styles.linkText}>New here? Register</Text>
-              </Pressable>
-            </>
-          )}
+          <Pressable testID="btn-forgot-password" onPress={() => router.push(`/forgot-password?role=${role}`)} style={{ alignItems: 'center', paddingVertical: 10 }}>
+            <Text style={styles.linkText}>{t('login.forgot')}</Text>
+          </Pressable>
+          <Pressable testID="btn-login-register" onPress={() => router.push(role === 'priest' ? '/priest-register' : '/register')} style={{ alignItems: 'center', paddingVertical: 4 }}>
+            <Text style={styles.linkText}>{t('login.newHere')}</Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

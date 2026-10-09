@@ -1,16 +1,74 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, ImageBackground } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { colors, radius } from '@/src/theme';
+import { useAuth } from '@/src/context/AuthContext';
+import LanguagePicker from '@/src/components/LanguagePicker';
 
-// Opening / intro screen. For this build the "enter" button goes straight
-// to the Yagnika (priest) registration screen. The devotee & admin
-// launcher (app/home.tsx) and their screens still exist in the codebase
-// but are not routed to — change the onPress below back to '/home' to
-// restore the full launcher.
+// Opening / intro screen — shown every time the app is opened.
+//
+// One codebase, two apps. The "flavor" is resolved at RUNTIME (not baked in
+// at build time) so the two Metro dev servers can share a transform cache
+// without poisoning each other:
+//   1. EXPO_PUBLIC_APP_FLAVOR env var, if explicitly "priest" / "customer"
+//      (used by a real standalone build).
+//   2. Otherwise, the Expo dev-server port: :8101 -> customer, else priest.
+function resolveFlavor(): 'priest' | 'customer' {
+  const env = (process.env.EXPO_PUBLIC_APP_FLAVOR || '').trim().toLowerCase();
+  if (env === 'customer' || env === 'priest') return env;
+  const host = String(
+    Constants.expoConfig?.hostUri ||
+    (Constants as any).expoGoConfig?.debuggerHost ||
+    (Constants as any).manifest?.debuggerHost ||
+    (Constants as any).manifest2?.extra?.expoGo?.debuggerHost ||
+    (Constants as any).manifest2?.launchAsset?.url ||
+    '');
+  if (/:8101(\D|$)/.test(host)) return 'customer';
+  return 'priest';
+}
+const FLAVOR = resolveFlavor();
+// This build serves exactly one role. Expo Go shares AsyncStorage between
+// the two flavors on one phone, so a session from the *other* app must be
+// ignored (and cleared) here, otherwise the customer QR would resume a
+// priest session and vice-versa.
+const EXPECTED_ROLE = FLAVOR === 'customer' ? 'devotee' : 'priest';
+
+// Both builds open straight to their login screen (registration is one tap
+// away). Admin has no screen in the app — it lives only on the Admin Web UI.
+const LOGIN_DEST = FLAVOR === 'customer' ? '/login?role=devotee' : '/login?role=priest';
+
+function destForUser(u: { role?: string; approval_status?: string | null } | null): string {
+  if (!u || (u.role !== EXPECTED_ROLE)) return LOGIN_DEST;
+  if (u.role === 'priest') {
+    return u.approval_status && u.approval_status !== 'approved' ? '/priest-pending' : '/priest-dashboard';
+  }
+  return '/(devotee)/dashboard';
+}
+
 export default function Splash() {
   const router = useRouter();
+  const { t } = useTranslation();
+  const { user, isLoading, logout } = useAuth();
+
+  // A session belonging to the other flavor's role — drop it.
+  useEffect(() => {
+    if (!isLoading && user && user.role !== EXPECTED_ROLE) {
+      logout();
+    }
+  }, [isLoading, user, logout]);
+
+  useEffect(() => {
+    if (!isLoading && user && user.role === EXPECTED_ROLE) {
+      const timer = setTimeout(() => router.replace(destForUser(user) as any), 900);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, user, router]);
+
+  const onEnter = () => router.replace(destForUser(user) as any);
 
   return (
     <View style={styles.root} testID="splash-screen">
@@ -25,12 +83,16 @@ export default function Splash() {
         />
       </ImageBackground>
 
+      <SafeAreaView edges={['top']} style={styles.topBar}>
+        <LanguagePicker tint="#FDE68A" />
+      </SafeAreaView>
+
       <View style={styles.centerBlock}>
         <View style={styles.logoCircle}>
           <Text style={styles.omGlyph}>ॐ</Text>
         </View>
-        <Text style={styles.title}>Yagnika</Text>
-        <Text style={styles.subtitle}>॥ सेवा • संस्कार • समर्पण ॥</Text>
+        <Text style={styles.title}>{t('common.appName')}</Text>
+        <Text style={styles.subtitle}>{t('splash.tagline')}</Text>
       </View>
 
       <View style={styles.footer}>
@@ -43,12 +105,14 @@ export default function Splash() {
         <Pressable
           testID="splash-enter-btn"
           style={({ pressed }) => [styles.cta, pressed && { opacity: 0.9 }]}
-          onPress={() => router.replace('/priest-register')}
+          onPress={onEnter}
         >
-          <Text style={styles.ctaText}>॥ स्वागतम् ॥</Text>
+          <Text style={styles.ctaText}>{t('splash.enter')}</Text>
         </Pressable>
 
-        <Text style={styles.hint}>Tap to begin Yagnika registration</Text>
+        <Text style={styles.hint}>
+          {user ? t('splash.hintContinue') : t('splash.hintRegister')}
+        </Text>
       </View>
     </View>
   );
@@ -56,6 +120,7 @@ export default function Splash() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000', paddingHorizontal: 24, paddingVertical: 40 },
+  topBar: { position: 'absolute', top: 0, right: 16, alignItems: 'flex-end' },
   centerBlock: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   logoCircle: {
     width: 100, height: 100, borderRadius: 50, backgroundColor: '#F59E0B',

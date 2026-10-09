@@ -7,10 +7,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import * as Location from 'expo-location';
 import { colors, radius } from '@/src/theme';
 import { apiFetch, useAuth } from '@/src/context/AuthContext';
 import { pickProfilePhoto } from '@/src/utils/pickProfilePhoto';
+import { pickAadhaarProof } from '@/src/utils/pickAadhaarProof';
+import ServiceCategoryPicker from '@/src/components/ServiceCategoryPicker';
+import LanguagePicker from '@/src/components/LanguagePicker';
+import { CATEGORY_ORDER } from '@/src/i18n/catalog';
 
 // ---------------------------------------------------------------------------
 // Yagnika (Priest) Registration — the only active flow in this build.
@@ -21,30 +26,24 @@ import { pickProfilePhoto } from '@/src/utils/pickProfilePhoto';
 
 interface Svc { id: string; name: string; category?: string | null; subcategory?: string | null; }
 
-const SAMPRADAYA = ['Smarta', 'Vaishnava', 'Shaiva', 'Shakta', 'Madhwa', 'Sri Vaishnava', 'Other'];
+const SAMPRADAYA = ['Smarta', 'Vaishnava', 'Shaiva', 'Shakta', 'Madhwa', 'Other'];
 const AGAMA = ['Vaikhanasa', 'Pancharatra', 'Shaiva Agama', 'Shakta Agama', 'Other'];
 const VEDA = ['Rig Veda', 'Yajur Veda', 'Sama Veda', 'Atharva Veda'];
 const LANGUAGES = ['Sanskrit', 'Telugu', 'Tamil', 'Kannada', 'Hindi', 'English', 'Others'];
 const DESIGNATION = ['Chief Priest', 'Archaka', 'Assistant Archaka', 'Paricharaka', 'Veda Pandit'];
 const AVAILABILITY = ['Daily', 'Weekly', 'Festival Only'];
 
-const CATEGORY_ORDER = [
-  'Poojas', 'Abhishekams', 'Alankarams', 'Homams / Havanas', 'Vratams',
-  'Samskaras (Life-Cycle Rituals)', 'Antyeshti & Pitru Karmas', 'Temple Sevas',
-  'Vanta Brahmin (Religious Cooking Services)', 'Paricharaka (Temple Support Services)',
-  'Parayanams',
-];
-
 type FormState = {
   // account
   email: string; password: string;
   // A. personal
   name: string; photo_url: string | null; aadhaar_number: string; mobile: string;
+  aadhaar_proof: string | null; aadhaar_proof_name: string;
   address: string; date_of_birth: string; latitude: number | null; longitude: number | null;
   // B. lineage & vedic
   sampradaya: string; sampradaya_other: string;
   agama: string; agama_other: string;
-  veda: string; shakha: string; sutra: string; gotra: string; pravara: string; abhivadanam: string;
+  veda: string; sutra: string; gotra: string; pravara: string; abhivadanam: string;
   // C. professional
   years_of_experience: string; languages: string[];
   priest_type: 'independent' | 'temple' | '';
@@ -57,10 +56,12 @@ type FormState = {
 
 const EMPTY: FormState = {
   email: '', password: '',
-  name: '', photo_url: null, aadhaar_number: '', mobile: '', address: '', date_of_birth: '',
+  name: '', photo_url: null, aadhaar_number: '', mobile: '',
+  aadhaar_proof: null, aadhaar_proof_name: '',
+  address: '', date_of_birth: '',
   latitude: null, longitude: null,
   sampradaya: '', sampradaya_other: '', agama: '', agama_other: '',
-  veda: '', shakha: '', sutra: '', gotra: '', pravara: '', abhivadanam: '',
+  veda: '', sutra: '', gotra: '', pravara: '', abhivadanam: '',
   years_of_experience: '', languages: [], priest_type: '',
   temple_name: '', temple_address: '', temple_deity: '', temple_designation: '',
   alt_mobile: '', optional_email: '', certifications: '', agama_certification: '',
@@ -70,6 +71,7 @@ const EMPTY: FormState = {
 
 export default function PriestRegister() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { registerPriest } = useAuth();
   const [f, setF] = useState<FormState>(EMPTY);
   const set = <K extends keyof FormState>(k: K) => (v: FormState[K]) => setF(p => ({ ...p, [k]: v }));
@@ -77,9 +79,9 @@ export default function PriestRegister() {
   const [catalog, setCatalog] = useState<Svc[]>([]);
   const [services, setServices] = useState<Set<string>>(new Set());
   const [openSection, setOpenSection] = useState<string>('A');
-  const [openCat, setOpenCat] = useState<string>('');
   const [locBusy, setLocBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [proofBusy, setProofBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -87,33 +89,11 @@ export default function PriestRegister() {
     apiFetch('/poojas').then(r => r.json()).then((rows: Svc[]) => setCatalog(rows.filter(r => r.category))).catch(() => {});
   }, []);
 
-  const grouped = useMemo(() => {
-    const m: Record<string, Record<string, Svc[]>> = {};
-    for (const s of catalog) {
-      const cat = s.category as string;
-      const sub = s.subcategory || '';
-      (m[cat] ||= {});
-      (m[cat][sub] ||= []).push(s);
-    }
-    return m;
-  }, [catalog]);
-
-  const cats = useMemo(
-    () => CATEGORY_ORDER.filter(c => grouped[c]).concat(Object.keys(grouped).filter(c => !CATEGORY_ORDER.includes(c))),
-    [grouped],
-  );
-
-  const toggleSvc = (id: string) => setServices(prev => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
-  });
-  const catIds = (cat: string) => Object.values(grouped[cat] || {}).flat().map(s => s.id);
-  const catSelectedCount = (cat: string) => catIds(cat).filter(id => services.has(id)).length;
-  const toggleCatAll = (cat: string) => setServices(prev => {
-    const ids = catIds(cat); const n = new Set(prev);
-    const allOn = ids.every(id => n.has(id));
-    ids.forEach(id => (allOn ? n.delete(id) : n.add(id)));
-    return n;
-  });
+  // at least one main category is covered by the selection
+  const categoriesSelected = useMemo(() => {
+    const byId = new Map(catalog.map(s => [s.id, s.category]));
+    return new Set(Array.from(services).map(id => byId.get(id)).filter(Boolean)).size;
+  }, [catalog, services]);
 
   const toggleLang = (l: string) => set('languages')(
     f.languages.includes(l) ? f.languages.filter(x => x !== l) : [...f.languages, l],
@@ -149,15 +129,28 @@ export default function PriestRegister() {
     } finally { setPhotoBusy(false); }
   };
 
+  const addAadhaarProof = async () => {
+    setProofBusy(true); setError('');
+    try {
+      const proof = await pickAadhaarProof();
+      if (proof) {
+        setF(p => ({ ...p, aadhaar_proof: proof.dataUri, aadhaar_proof_name: `${proof.name} (${proof.sizeKB} KB)` }));
+      }
+    } catch (e: any) {
+      setError(e.message || 'Could not attach Aadhaar proof');
+    } finally { setProofBusy(false); }
+  };
+
   const submit = async () => {
     const sampradaya = f.sampradaya === 'Other' ? f.sampradaya_other.trim() : f.sampradaya;
     const agama = f.agama === 'Other' ? f.agama_other.trim() : f.agama;
     const req: [string, any][] = [
       ['Full Name', f.name.trim()], ['Email', f.email.trim()], ['Password (min 6)', f.password.length >= 6],
       ['Aadhaar Number (12 digits)', f.aadhaar_number.replace(/\D/g, '').length === 12],
+      ['Aadhaar ID Proof (JPEG/PNG/PDF)', !!f.aadhaar_proof],
       ['Primary Mobile', f.mobile.trim()], ['Residential Address', f.address.trim()],
       ['Date of Birth (YYYY-MM-DD)', /^\d{4}-\d{2}-\d{2}$/.test(f.date_of_birth.trim())],
-      ['Sampradaya', sampradaya], ['Agama', agama], ['Veda', f.veda], ['Shakha', f.shakha.trim()],
+      ['Sampradaya', sampradaya], ['Agama', agama], ['Veda', f.veda],
       ['Sutra', f.sutra.trim()], ['Gotra', f.gotra.trim()], ['Pravara', f.pravara.trim()],
       ['Years of Experience', f.years_of_experience.trim() !== '' && Number(f.years_of_experience) >= 0],
       ['At least one Language', f.languages.length > 0],
@@ -165,7 +158,7 @@ export default function PriestRegister() {
     ];
     const missing = req.filter(([, v]) => !v).map(([k]) => k);
     if (f.priest_type === 'temple' && !f.temple_name.trim()) missing.push('Temple Name');
-    if (services.size === 0) missing.push('At least one Service Category');
+    if (categoriesSelected === 0) missing.push('At least one main service category');
     if (missing.length) { setError('Please complete: ' + missing.join(', ')); return; }
 
     const yn = (v: string) => (v === 'yes' ? true : v === 'no' ? false : null);
@@ -173,9 +166,10 @@ export default function PriestRegister() {
       email: f.email.trim().toLowerCase(), password: f.password,
       name: f.name.trim(), photo_url: f.photo_url,
       aadhaar_number: f.aadhaar_number.replace(/\D/g, ''),
+      aadhaar_proof: f.aadhaar_proof, aadhaar_proof_name: f.aadhaar_proof_name,
       mobile: f.mobile.trim(), address: f.address.trim(), date_of_birth: f.date_of_birth.trim(),
       latitude: f.latitude, longitude: f.longitude,
-      sampradaya, agama, veda: f.veda, shakha: f.shakha.trim(), sutra: f.sutra.trim(),
+      sampradaya, agama, veda: f.veda, sutra: f.sutra.trim(),
       gotra: f.gotra.trim(), pravara: f.pravara.trim(), abhivadanam: f.abhivadanam.trim(),
       years_of_experience: Number(f.years_of_experience),
       languages: f.languages, priest_type: f.priest_type,
@@ -192,25 +186,25 @@ export default function PriestRegister() {
 
     setError(''); setBusy(true);
     try {
-      // Creates the priest account, records into priest_registration, and
-      // persists the session (token + user) so the dashboard/profile work.
+      // Creates the priest account + priest_registration record. The account
+      // is inactive until an admin approves it, so go to the pending screen.
       await registerPriest(payload);
-      router.replace('/priest-dashboard');
+      router.replace('/priest-pending');
     } catch (e: any) {
       setError(e.message || 'Registration failed');
     } finally { setBusy(false); }
   };
 
-  const totalSel = services.size;
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']} testID="priest-register-screen">
       <View style={styles.headerBar}>
         <View style={styles.logoBadge}><Text style={styles.logoY}>Y</Text></View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Yagnika Registration</Text>
-          <Text style={styles.headerSub}>Priest onboarding & service selection</Text>
+          <Text style={styles.headerTitle}>{t('register.title')}</Text>
+          <Text style={styles.headerSub}>{t('register.subtitle')}</Text>
         </View>
+        <LanguagePicker tint="#FFF" compact />
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -218,7 +212,7 @@ export default function PriestRegister() {
           {error ? <Text style={styles.error} testID="priest-register-error">{error}</Text> : null}
 
           {/* ---------- A. Personal Information ---------- */}
-          <Section id="A" title="A · Personal Information" open={openSection} onToggle={setOpenSection}>
+          <Section id="A" title={t('register.sectionA')} open={openSection} onToggle={setOpenSection}>
             <View style={styles.photoRow}>
               {f.photo_url
                 ? <Image source={{ uri: f.photo_url }} style={styles.photo} contentFit="cover" />
@@ -226,73 +220,93 @@ export default function PriestRegister() {
               <Pressable onPress={addPhoto} disabled={photoBusy} style={styles.photoBtn}>
                 {photoBusy ? <ActivityIndicator size="small" color={colors.orange} />
                   : <Ionicons name="camera" size={15} color={colors.orange} />}
-                <Text style={styles.photoBtnText}>{f.photo_url ? 'Change photo' : 'Add profile photo'}</Text>
+                <Text style={styles.photoBtnText}>{f.photo_url ? t('dashboard.changePhoto') : t('register.addPhoto', { defaultValue: 'Add profile photo' })}</Text>
               </Pressable>
             </View>
 
-            <Input label="Full Name (as per official records) *" value={f.name} onChange={set('name')} placeholder="Full name" />
-            <Input label="Aadhaar Number *" value={f.aadhaar_number} onChange={set('aadhaar_number')} placeholder="12-digit number" keyboardType="number-pad" maxLength={14} />
-            <Input label="Primary Mobile Number *" value={f.mobile} onChange={set('mobile')} placeholder="+91 98765 43210" keyboardType="phone-pad" />
-            <Input label="Date of Birth *" value={f.date_of_birth} onChange={set('date_of_birth')} placeholder="YYYY-MM-DD" keyboardType="numbers-and-punctuation" maxLength={10} />
+            <Input label={t('register.fullName') + ' *'} value={f.name} onChange={set('name')} placeholder={t('register.fullName')} />
+            <Input label={t('register.aadhaarNumber') + ' *'} value={f.aadhaar_number} onChange={set('aadhaar_number')} placeholder={t('register.aadhaarNumber')} keyboardType="number-pad" maxLength={14} />
+
+            <View style={styles.field}>
+              <Text style={styles.label}>{t('register.aadhaarProof')} * · {t('register.aadhaarProofHint')}</Text>
+              <Pressable onPress={addAadhaarProof} disabled={proofBusy} style={styles.uploadBtn}>
+                {proofBusy
+                  ? <ActivityIndicator size="small" color={colors.orange} />
+                  : <Ionicons name={f.aadhaar_proof ? 'document-attach' : 'cloud-upload-outline'} size={16} color={colors.orange} />}
+                <Text style={styles.uploadBtnText} numberOfLines={1}>
+                  {f.aadhaar_proof ? (f.aadhaar_proof_name || t('register.fileAttached', { defaultValue: 'File attached' })) : t('register.uploadProof')}
+                </Text>
+              </Pressable>
+              {f.aadhaar_proof ? (
+                <Pressable onPress={() => setF(p => ({ ...p, aadhaar_proof: null, aadhaar_proof_name: '' }))}>
+                  <Text style={styles.removeText}>{t('common.remove')}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <Input label={t('register.primaryMobile') + ' *'} value={f.mobile} onChange={set('mobile')} placeholder="+91 98765 43210" keyboardType="phone-pad" />
+            <Input label={t('register.dob') + ' *'} value={f.date_of_birth} onChange={set('date_of_birth')} placeholder="YYYY-MM-DD" keyboardType="numbers-and-punctuation" maxLength={10} />
 
             <View style={styles.field}>
               <View style={styles.rowBetween}>
-                <Text style={styles.label}>Residential Address *</Text>
+                <Text style={styles.label}>{t('register.address')} *</Text>
                 <Pressable onPress={fetchLocation} disabled={locBusy} style={styles.inlineBtn}>
                   {locBusy ? <ActivityIndicator size="small" color={colors.orange} /> : <Ionicons name="location" size={13} color={colors.orange} />}
-                  <Text style={styles.inlineBtnText}>{locBusy ? 'Fetching…' : 'Use current location'}</Text>
+                  <Text style={styles.inlineBtnText}>{locBusy ? t('common.loading') : t('register.useLocation')}</Text>
                 </Pressable>
               </View>
-              <TextInput value={f.address} onChangeText={set('address')} placeholder="Street, City, State, PIN"
+              <TextInput value={f.address} onChangeText={set('address')} placeholder={t('register.address')}
                 style={[styles.input, styles.inputMulti]} placeholderTextColor={colors.gray400} multiline />
               {f.latitude != null && f.longitude != null &&
                 <Text style={styles.coord}>📍 {f.latitude.toFixed(4)}, {f.longitude.toFixed(4)}</Text>}
             </View>
 
             <View style={styles.divider} />
-            <Text style={styles.subhead}>Account (for login)</Text>
-            <Input label="Email *" value={f.email} onChange={set('email')} placeholder="you@example.com" keyboardType="email-address" />
-            <Input label="Password *" value={f.password} onChange={set('password')} placeholder="At least 6 characters" secure />
+            <Text style={styles.subhead}>{t('register.accountForLogin')}</Text>
+            <Input label={t('register.email', { defaultValue: 'Email' }) + ' *'} value={f.email} onChange={set('email')} placeholder="you@example.com" keyboardType="email-address" />
+            <Input label={t('register.password', { defaultValue: 'Password' }) + ' *'} value={f.password} onChange={set('password')} placeholder={t('devoteeReg.passwordPlaceholder')} secure />
           </Section>
 
           {/* ---------- B. Religious Lineage & Vedic Details ---------- */}
-          <Section id="B" title="B · Religious Lineage & Vedic Details" open={openSection} onToggle={setOpenSection}>
-            <ChipField label="Sampradaya *" options={SAMPRADAYA} value={f.sampradaya} onChange={set('sampradaya')} />
+          <Section id="B" title={t('register.sectionB')} open={openSection} onToggle={setOpenSection}>
+            <ChipField label={t('register.sampradaya') + ' *'} options={SAMPRADAYA} value={f.sampradaya} onChange={set('sampradaya')}
+              labels={(o) => t('options.sampradaya.' + o, { defaultValue: o })} />
             {f.sampradaya === 'Other' &&
-              <Input label="Specify Sampradaya *" value={f.sampradaya_other} onChange={set('sampradaya_other')} placeholder="Your sampradaya" />}
-            <ChipField label="Agama Followed *" options={AGAMA} value={f.agama} onChange={set('agama')} />
+              <Input label={t('register.sampradaya') + ' *'} value={f.sampradaya_other} onChange={set('sampradaya_other')} placeholder={t('register.enterHere')} />}
+            <ChipField label={t('register.agama') + ' *'} options={AGAMA} value={f.agama} onChange={set('agama')}
+              labels={(o) => t('options.agama.' + o, { defaultValue: o })} />
             {f.agama === 'Other' &&
-              <Input label="Specify Agama *" value={f.agama_other} onChange={set('agama_other')} placeholder="Your agama" />}
+              <Input label={t('register.agama') + ' *'} value={f.agama_other} onChange={set('agama_other')} placeholder={t('register.enterHere')} />}
 
             <View style={styles.divider} />
-            <Text style={styles.subhead}>Vedic Details</Text>
-            <ChipField label="Veda *" options={VEDA} value={f.veda} onChange={set('veda')} />
-            <Input label="Shakha *" value={f.shakha} onChange={set('shakha')} placeholder="e.g. Shukla Yajur / Taittiriya" />
-            <Input label="Sutra *" value={f.sutra} onChange={set('sutra')} placeholder="e.g. Apastamba / Bodhayana" />
-            <Input label="Gotra *" value={f.gotra} onChange={set('gotra')} placeholder="e.g. Bharadwaja" />
-            <Input label="Pravara (Rishi Names) *" value={f.pravara} onChange={set('pravara')} placeholder="e.g. Angirasa, Barhaspatya, Bharadwaja" />
-            <Input label="Abhivadanam (optional)" value={f.abhivadanam} onChange={set('abhivadanam')} placeholder="Full abhivadanam" />
+            <Text style={styles.subhead}>{t('register.vedicDetails')}</Text>
+            <ChipField label={t('register.veda') + ' *'} options={VEDA} value={f.veda} onChange={set('veda')}
+              labels={(o) => t('options.veda.' + o, { defaultValue: o })} />
+            <Input label={t('register.sutra') + ' *'} value={f.sutra} onChange={set('sutra')} placeholder="e.g. Apastamba / Bodhayana" />
+            <Input label={t('register.gotra') + ' *'} value={f.gotra} onChange={set('gotra')} placeholder="e.g. Bharadwaja" />
+            <Input label={t('register.pravara') + ' *'} value={f.pravara} onChange={set('pravara')} placeholder="e.g. Angirasa, Barhaspatya, Bharadwaja" />
+            <Input label={t('register.abhivadanam')} value={f.abhivadanam} onChange={set('abhivadanam')} placeholder={t('register.abhivadanam')} />
           </Section>
 
           {/* ---------- C. Professional Details ---------- */}
-          <Section id="C" title="C · Professional Details" open={openSection} onToggle={setOpenSection}>
-            <Input label="Years of Experience *" value={f.years_of_experience} onChange={set('years_of_experience')} placeholder="e.g. 12" keyboardType="number-pad" maxLength={2} />
+          <Section id="C" title={t('register.sectionC')} open={openSection} onToggle={setOpenSection}>
+            <Input label={t('register.yearsExperience') + ' *'} value={f.years_of_experience} onChange={set('years_of_experience')} placeholder="e.g. 12" keyboardType="number-pad" maxLength={2} />
 
             <View style={styles.field}>
-              <Text style={styles.label}>Languages Known *</Text>
+              <Text style={styles.label}>{t('register.languagesKnown')} *</Text>
               <View style={styles.chipWrap}>
                 {LANGUAGES.map(l => (
                   <Pressable key={l} onPress={() => toggleLang(l)} style={[styles.chip, f.languages.includes(l) && styles.chipOn]}>
-                    <Text style={[styles.chipText, f.languages.includes(l) && styles.chipTextOn]}>{l}</Text>
+                    <Text style={[styles.chipText, f.languages.includes(l) && styles.chipTextOn]}>{t('options.plang.' + l, { defaultValue: l })}</Text>
                   </Pressable>
                 ))}
               </View>
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>Type of Priest *</Text>
+              <Text style={styles.label}>{t('register.priestType')} *</Text>
               <View style={styles.chipWrap}>
-                {[['independent', 'Independent Priest'], ['temple', 'Temple Priest']].map(([k, lbl]) => (
+                {[['independent', t('register.independentPriest')], ['temple', t('register.templePriest')]].map(([k, lbl]) => (
                   <Pressable key={k} onPress={() => set('priest_type')(k as any)} style={[styles.chip, f.priest_type === k && styles.chipOn]}>
                     <Text style={[styles.chipText, f.priest_type === k && styles.chipTextOn]}>{lbl}</Text>
                   </Pressable>
@@ -302,78 +316,47 @@ export default function PriestRegister() {
 
             {f.priest_type === 'temple' && (
               <View style={styles.templeBox}>
-                <Input label="Temple Name *" value={f.temple_name} onChange={set('temple_name')} placeholder="Temple name" />
-                <Input label="Temple Address" value={f.temple_address} onChange={set('temple_address')} placeholder="Temple address" />
-                <Input label="Temple Deity" value={f.temple_deity} onChange={set('temple_deity')} placeholder="Presiding deity" />
-                <ChipField label="Designation" options={DESIGNATION} value={f.temple_designation} onChange={set('temple_designation')} />
+                <Input label={t('register.templeName') + ' *'} value={f.temple_name} onChange={set('temple_name')} placeholder={t('register.templeNamePlaceholder')} />
+                <Input label={t('register.templeAddress')} value={f.temple_address} onChange={set('temple_address')} placeholder={t('register.templeAddress')} />
+                <Input label={t('register.templeDeity')} value={f.temple_deity} onChange={set('temple_deity')} placeholder={t('register.templeDeity')} />
+                <ChipField label={t('register.designation')} options={DESIGNATION} value={f.temple_designation} onChange={set('temple_designation')}
+                  labels={(o) => t('options.designation.' + o, { defaultValue: o })} />
               </View>
             )}
           </Section>
 
           {/* ---------- D. Service Categories ---------- */}
-          <Section id="D" title={`D · Service Categories  (${totalSel} selected)`} open={openSection} onToggle={setOpenSection}>
-            <Text style={styles.hint}>Select one or more services you can perform. Tap a category to expand.</Text>
-            {catalog.length === 0 && <Text style={styles.loading}>Loading service catalog…</Text>}
-            {cats.map(cat => {
-              const on = openCat === cat;
-              const sel = catSelectedCount(cat);
-              const total = catIds(cat).length;
-              return (
-                <View key={cat} style={styles.catBox}>
-                  <Pressable onPress={() => setOpenCat(on ? '' : cat)} style={styles.catHead}>
-                    <Ionicons name={on ? 'chevron-down' : 'chevron-forward'} size={16} color={colors.darkRed} />
-                    <Text style={styles.catTitle}>{cat}</Text>
-                    <View style={styles.catCount}><Text style={styles.catCountText}>{sel}/{total}</Text></View>
-                  </Pressable>
-                  {on && (
-                    <View style={styles.catBody}>
-                      <Pressable onPress={() => toggleCatAll(cat)} style={styles.selectAllRow}>
-                        <Text style={styles.selectAllText}>
-                          {catIds(cat).every(id => services.has(id)) ? 'Clear all in category' : 'Select all in category'}
-                        </Text>
-                      </Pressable>
-                      {Object.entries(grouped[cat] || {}).map(([sub, items]) => (
-                        <View key={sub || 'default'}>
-                          {sub ? <Text style={styles.subLabel}>{sub}</Text> : null}
-                          {items.map(s => {
-                            const checked = services.has(s.id);
-                            return (
-                              <Pressable key={s.id} onPress={() => toggleSvc(s.id)} style={[styles.svcRow, checked && styles.svcRowOn]}>
-                                <View style={[styles.box, checked && styles.boxOn]}>
-                                  {checked && <Ionicons name="checkmark" size={12} color="#FFF" />}
-                                </View>
-                                <Text style={styles.svcName}>{s.name}</Text>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
+          <Section id="D" title={`${t('register.sectionD')}  (${services.size})`} open={openSection} onToggle={setOpenSection}>
+            <Text style={styles.hint}>{t('register.servicesHint')}</Text>
+            {catalog.length === 0
+              ? <Text style={styles.loading}>{t('catalog.ui.loadingCatalog')}</Text>
+              : <ServiceCategoryPicker catalog={catalog} selected={services} onChange={setServices} order={CATEGORY_ORDER} />}
           </Section>
 
           {/* ---------- Optional Information ---------- */}
-          <Section id="E" title="Optional Information" open={openSection} onToggle={setOpenSection}>
-            <Input label="Alternative Mobile Number" value={f.alt_mobile} onChange={set('alt_mobile')} placeholder="+91 …" keyboardType="phone-pad" />
-            <Input label="Alternate Email Address" value={f.optional_email} onChange={set('optional_email')} placeholder="alt@example.com" keyboardType="email-address" />
-            <Input label="Priest Certification(s)" value={f.certifications} onChange={set('certifications')} placeholder="Certificate names / issuing bodies" />
-            <Input label="Agama Certification" value={f.agama_certification} onChange={set('agama_certification')} placeholder="Agama certification details" />
-            <Input label="Veda Patashala Details" value={f.veda_patashala} onChange={set('veda_patashala')} placeholder="Patashala name, years" />
-            <Input label="Guru / Acharya Name" value={f.guru_name} onChange={set('guru_name')} placeholder="Guru name" />
-            <Input label="Awards / Recognitions" value={f.awards} onChange={set('awards')} placeholder="Awards" />
-            <Input label="Years of Temple Service" value={f.years_temple_service} onChange={set('years_temple_service')} placeholder="e.g. 8" keyboardType="number-pad" maxLength={2} />
-            <ChipField label="Availability" options={AVAILABILITY} value={f.availability} onChange={set('availability')} />
-            <YesNo label="Travel Availability" value={f.travel_availability} onChange={set('travel_availability')} />
-            <YesNo label="Online Consultation Availability" value={f.online_consultation} onChange={set('online_consultation')} />
+          <Section id="E" title={t('register.sectionE')} open={openSection} onToggle={setOpenSection}>
+            <Input label={t('register.altMobile')} value={f.alt_mobile} onChange={set('alt_mobile')} placeholder="+91 …" keyboardType="phone-pad" />
+            <Input label={t('register.altEmail')} value={f.optional_email} onChange={set('optional_email')} placeholder="alt@example.com" keyboardType="email-address" />
+            <Input label={t('register.certifications')} value={f.certifications} onChange={set('certifications')} placeholder={t('register.enterHere')} />
+            <Input label={t('register.agamaCert')} value={f.agama_certification} onChange={set('agama_certification')} placeholder={t('register.enterHere')} />
+            <Input label={t('register.vedaPatashala')} value={f.veda_patashala} onChange={set('veda_patashala')} placeholder={t('register.enterHere')} />
+            <Input label={t('register.guruName')} value={f.guru_name} onChange={set('guru_name')} placeholder={t('register.enterHere')} />
+            <Input label={t('register.awards')} value={f.awards} onChange={set('awards')} placeholder={t('register.enterHere')} />
+            <Input label={t('register.yearsTempleService')} value={f.years_temple_service} onChange={set('years_temple_service')} placeholder="e.g. 8" keyboardType="number-pad" maxLength={2} />
+            <ChipField label={t('profile.availability')} options={AVAILABILITY} value={f.availability} onChange={set('availability')}
+              labels={(o) => t('options.availability.' + o, { defaultValue: o })} />
+            <YesNo label={t('register.travelAvailability', { defaultValue: 'Travel availability' })} value={f.travel_availability} onChange={set('travel_availability')} yesLabel={t('options.yes')} noLabel={t('options.no')} />
+            <YesNo label={t('register.onlineConsult', { defaultValue: 'Online consultation availability' })} value={f.online_consultation} onChange={set('online_consultation')} yesLabel={t('options.yes')} noLabel={t('options.no')} />
           </Section>
 
           <Pressable onPress={submit} disabled={busy} style={({ pressed }) => [styles.cta, (pressed || busy) && { opacity: 0.85 }]} testID="btn-priest-submit">
-            <Text style={styles.ctaText}>{busy ? 'Registering…' : 'Submit Registration'}</Text>
+            <Text style={styles.ctaText}>{busy ? t('register.registering') : t('register.submit')}</Text>
           </Pressable>
-          <Text style={styles.footNote}>Fields marked * are mandatory.</Text>
+          <Text style={styles.footNote}>{t('register.mandatoryNote')}</Text>
+
+          <Pressable onPress={() => router.push('/login?role=priest')} style={styles.loginLink} testID="btn-priest-login-link">
+            <Text style={styles.loginLinkText}>{t('register.alreadyRegistered')}  <Text style={styles.loginLinkStrong}>{t('register.priestLogin')} →</Text></Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -411,14 +394,16 @@ function Input({ label, value, onChange, placeholder, secure, keyboardType, maxL
   );
 }
 
-function ChipField({ label, options, value, onChange }: { label: string; options: string[]; value: string; onChange: (v: string) => void; }) {
+// `labels` maps a canonical option value -> its display label (translated).
+// The stored value is always the canonical English string.
+function ChipField({ label, options, value, onChange, labels }: { label: string; options: string[]; value: string; onChange: (v: string) => void; labels?: (o: string) => string; }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.chipWrap}>
         {options.map(o => (
           <Pressable key={o} onPress={() => onChange(value === o ? '' : o)} style={[styles.chip, value === o && styles.chipOn]}>
-            <Text style={[styles.chipText, value === o && styles.chipTextOn]}>{o}</Text>
+            <Text style={[styles.chipText, value === o && styles.chipTextOn]}>{labels ? labels(o) : o}</Text>
           </Pressable>
         ))}
       </View>
@@ -426,14 +411,14 @@ function ChipField({ label, options, value, onChange }: { label: string; options
   );
 }
 
-function YesNo({ label, value, onChange }: { label: string; value: string; onChange: (v: 'yes' | 'no') => void; }) {
+function YesNo({ label, value, onChange, yesLabel, noLabel }: { label: string; value: string; onChange: (v: 'yes' | 'no') => void; yesLabel: string; noLabel: string; }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.chipWrap}>
         {(['yes', 'no'] as const).map(o => (
           <Pressable key={o} onPress={() => onChange(o)} style={[styles.chip, value === o && styles.chipOn]}>
-            <Text style={[styles.chipText, value === o && styles.chipTextOn]}>{o === 'yes' ? 'Yes' : 'No'}</Text>
+            <Text style={[styles.chipText, value === o && styles.chipTextOn]}>{o === 'yes' ? yesLabel : noLabel}</Text>
           </Pressable>
         ))}
       </View>
@@ -479,6 +464,9 @@ const styles = StyleSheet.create({
   hint: { fontSize: 12, color: colors.gray500, marginBottom: 10 },
   loading: { fontSize: 12, color: colors.gray500 },
   footNote: { fontSize: 11, color: colors.gray500, textAlign: 'center', marginTop: 10 },
+  loginLink: { alignItems: 'center', paddingVertical: 14, marginTop: 4 },
+  loginLinkText: { fontSize: 13, color: colors.gray600 },
+  loginLinkStrong: { color: colors.darkRed, fontWeight: '800' },
 
   inlineBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
   inlineBtnText: { fontSize: 11, color: colors.orange, fontWeight: '700' },
@@ -488,6 +476,9 @@ const styles = StyleSheet.create({
   photoEmpty: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.gray200 },
   photoBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.orange, backgroundColor: '#FFF7ED' },
   photoBtnText: { fontSize: 12, color: colors.orangeDark, fontWeight: '700' },
+  uploadBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 12, borderRadius: radius.sm, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.orange, backgroundColor: '#FFF7ED' },
+  uploadBtnText: { flex: 1, fontSize: 12, color: colors.orangeDark, fontWeight: '700' },
+  removeText: { fontSize: 11, color: colors.red600, fontWeight: '700', marginTop: 6 },
 
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, borderColor: colors.gray300, backgroundColor: '#FBFBFB' },

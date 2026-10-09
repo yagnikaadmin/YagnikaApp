@@ -17,8 +17,8 @@ export default function PoojaImage({ id, name, height = 120, radius = 16, style,
   const uri = poojaImageFor(id, name);
   return (
     <View style={[{ height, borderRadius: radius, overflow: 'hidden' }, style]}>
-      <Image source={{ uri }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
-      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} style={StyleSheet.absoluteFillObject} />
+      <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.55)']} style={StyleSheet.absoluteFill} />
       {children ? <View style={styles.overlay}>{children}</View> : null}
     </View>
   );

@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useTranslation } from 'react-i18next';
 import { colors, radius } from '@/src/theme';
 import { apiFetch, useAuth } from '@/src/context/AuthContext';
 import { poojaImageFor } from '@/src/utils/poojaImages';
@@ -18,6 +19,7 @@ interface Booking {
 
 export default function BookingConfirmation() {
   const router = useRouter();
+  const { t } = useTranslation();
   const { token } = useAuth();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [booking, setBooking] = useState<Booking | null>(null);
@@ -29,12 +31,21 @@ export default function BookingConfirmation() {
 
   useFocusEffect(useCallback(() => {
     load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    const tm = setInterval(load, 5000);
+    return () => clearInterval(tm);
   }, [load]));
 
   const assigned = booking?.status === 'Priest Assigned';
   const pending = booking?.status === 'Pending Priest Assignment';
+
+  const statusLabel = (s?: string) => {
+    switch (s) {
+      case 'Pending Priest Assignment': return t('dashboard.pending');
+      case 'Priest Assigned': return t('dashboard.accepted');
+      case 'Completed': return t('dashboard.completed');
+      default: return s || t('dashboard.pending');
+    }
+  };
 
   return (
     <View style={styles.root} testID="booking-confirmation">
@@ -43,30 +54,30 @@ export default function BookingConfirmation() {
           <Pressable testID="btn-conf-home" onPress={() => router.replace('/(devotee)/dashboard')} style={styles.backBtn}>
             <Ionicons name="close" size={22} color="#FFF" />
           </Pressable>
-          <Text style={styles.headerTitle}>{assigned ? 'Booking Confirmed' : 'Booking Submitted'}</Text>
+          <Text style={styles.headerTitle}>{assigned ? t('bookingConfirm.confirmedHeader') : t('bookingConfirm.submittedHeader')}</Text>
         </View>
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={{ padding: 20, gap: 20 }}>
         <View style={styles.hero}>
           {booking?.pooja_name && (
-            <Image source={{ uri: poojaImageFor('', booking.pooja_name) }} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+            <Image source={{ uri: poojaImageFor('', booking.pooja_name) }} style={StyleSheet.absoluteFill} contentFit="cover" />
           )}
-          <LinearGradient colors={['rgba(255,255,255,0.94)', 'rgba(255,255,255,0.98)', '#FFF']} style={StyleSheet.absoluteFillObject} />
+          <LinearGradient colors={['rgba(255,255,255,0.94)', 'rgba(255,255,255,0.98)', '#FFF']} style={StyleSheet.absoluteFill} />
           <View style={[styles.checkCircle, { backgroundColor: assigned ? '#10B981' : colors.gold }]}>
             <Ionicons name={assigned ? 'checkmark' : 'time'} size={44} color="#FFF" />
           </View>
-          <Text style={styles.heroTitle}>{assigned ? 'Booking Confirmed' : 'Booking Request Submitted'}</Text>
+          <Text style={styles.heroTitle}>{assigned ? t('bookingConfirm.confirmedTitle') : t('bookingConfirm.submittedTitle')}</Text>
           <Text style={styles.heroSub}>{
             assigned
-              ? 'A Yagnika has accepted your booking. Contact details below.'
+              ? t('bookingConfirm.acceptedSub')
               : pending
-                ? 'Waiting for a Priest to accept your booking.'
-                : `Status: ${booking?.status || '—'}`
+                ? t('bookingConfirm.pendingSub')
+                : t('bookingConfirm.statusSub', { status: statusLabel(booking?.status) })
           }</Text>
           <View style={[styles.statusPill, { backgroundColor: assigned ? '#D1FAE5' : '#FEF3C7' }]}>
             <Text style={[styles.statusText, { color: assigned ? '#065F46' : colors.amber800 }]}>
-              {booking?.status || 'Pending'}
+              {statusLabel(booking?.status)}
             </Text>
           </View>
         </View>
@@ -75,7 +86,7 @@ export default function BookingConfirmation() {
           <View style={styles.priestCard} testID="assigned-priest-card">
             <Ionicons name="person-circle" size={32} color={colors.emerald800} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.pLabel}>Assigned Yagnika</Text>
+              <Text style={styles.pLabel}>{t('bookingConfirm.assignedYagnika')}</Text>
               <Text style={styles.pName}>{booking?.priest_name}</Text>
               <Text style={styles.pMobile}>📞 {booking?.priest_mobile}</Text>
             </View>
@@ -83,19 +94,19 @@ export default function BookingConfirmation() {
         )}
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Booking Details</Text>
-          <Row label="Pooja" value={booking?.pooja_name} />
-          <Row label="Date" value={booking?.booking_date} />
-          <Row label="Time" value={booking?.booking_time} />
-          <Row label="Sankalp" value={booking?.sankalp_name} />
-          <Row label="Gothram" value={booking?.gothram} />
-          <Row label="Place" value={booking?.place} />
-          {booking?.notes ? <Row label="Notes" value={booking.notes} /> : null}
-          <Row label="Booking ID" value={booking?.id?.slice(0, 8) + '...'} />
+          <Text style={styles.cardTitle}>{t('bookingConfirm.detailsTitle')}</Text>
+          <Row label={t('bookingConfirm.pooja')} value={booking?.pooja_name} />
+          <Row label={t('bookingConfirm.date')} value={booking?.booking_date} />
+          <Row label={t('bookingConfirm.time')} value={booking?.booking_time} />
+          <Row label={t('bookingConfirm.sankalp')} value={booking?.sankalp_name} />
+          <Row label={t('bookingConfirm.gothram')} value={booking?.gothram} />
+          <Row label={t('bookingConfirm.place')} value={booking?.place} />
+          {booking?.notes ? <Row label={t('bookingConfirm.notes')} value={booking.notes} /> : null}
+          <Row label={t('bookingConfirm.bookingId')} value={booking?.id?.slice(0, 8) + '...'} />
         </View>
 
         <Pressable testID="btn-conf-dashboard" onPress={() => router.replace('/(devotee)/dashboard')} style={styles.cta}>
-          <Text style={styles.ctaText}>Back to Dashboard</Text>
+          <Text style={styles.ctaText}>{t('bookingConfirm.backToDashboard')}</Text>
         </Pressable>
       </ScrollView>
     </View>

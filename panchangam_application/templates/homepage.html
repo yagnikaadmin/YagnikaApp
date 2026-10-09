@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panchangam Dynamic Sky & Kala Chakra Clock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=Noto+Sans+Telugu:wght@400;500;700;900&family=Roboto:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #000;
+      font-family: 'Roboto', 'Noto Sans Telugu', sans-serif;
+      overflow: hidden;
+    }
+
+    /* 1. VIEWPORT & BACKGROUND LAYERS */
+    .sky-viewport {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .bg-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: cover; 
+      background-position: center center;
+      background-repeat: no-repeat;
+      opacity: 0;
+      transition: opacity 1.5s ease-in-out;
+      z-index: 1;
+    }
+
+    .bg-morning   { background-image: url('static/HomePage_Morning.webp'); }
+    .bg-afternoon { background-image: url('static/HomePage_Afternoon.webp'); }
+    .bg-evening   { background-image: url('static/HomePage_Evening.webp'); }
+    .bg-night     { background-image: url('static/HomePage_Night.webp'); }
+
+    .bg-layer.active {
+      opacity: 1;
+    }
+
+    /* 2. NAVBAR */
+    .main-navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 75px;
+      z-index: 100;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 3%; 
+      transition: background-color 1s ease, border-color 1s ease;
+    }
+
+    .brand-container {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      gap: clamp(12px, 1.8vw, 25px);
+    }
+
+    .main-navbar.day-theme {
+      background: rgba(255, 248, 235, 0.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(128, 0, 0, 0.15);
+    }
+
+    .main-navbar.day-theme .nav-links a,
+    .main-navbar.day-theme .lang-dropdown-btn {
+      color: #4a0000;
+      text-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
+    }
+
+    .main-navbar.day-theme .nav-links a:hover,
+    .main-navbar.day-theme .nav-links a.active {
+      color: #800000;
+      border-bottom: 2px solid #800000;
+    }
+
+    .main-navbar.day-theme .celestial-item {
+      color: #5c0000;
+    }
+
+    .main-navbar.day-theme .celestial-bar {
+      border-left-color: rgba(128, 0, 0, 0.25);
+    }
+
+    .main-navbar.night-theme {
+      background: rgba(10, 10, 20, 0.65);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .main-navbar.night-theme .nav-links a,
+    .main-navbar.night-theme .lang-dropdown-btn {
+      color: #ffffff;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    }
+
+    .main-navbar.night-theme .nav-links a:hover,
+    .main-navbar.night-theme .nav-links a.active {
+      color: #ffffff;
+      border-bottom: 2px solid #ffffff;
+    }
+
+    .main-navbar.night-theme .celestial-item {
+      color: #ffffff;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    }
+
+    .main-navbar.night-theme .celestial-bar {
+      border-left-color: rgba(255, 255, 255, 0.35);
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      text-decoration: none;
+    }
+
+    .logo-img {
+      height: 100%; 
+      max-height: 65px;
+      width: auto;
+      object-fit: contain;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+    }
+
+    .celestial-bar {
+      display: flex;
+      align-items: center;
+      height: 60%;
+      gap: clamp(8px, 1.2vw, 16px);
+      padding-left: clamp(10px, 1.5vw, 20px);
+      border-left: 1.5px solid transparent;
+      transition: border-color 1s ease;
+    }
+
+    .celestial-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: clamp(10px, 0.85vw, 13px);
+      font-weight: 700;
+      white-space: nowrap;
+      transition: color 1s ease;
+    }
+
+    .celestial-label { opacity: 0.9; font-weight: 500; }
+    .celestial-val { font-weight: 700; }
+
+    .nav-links {
+      display: flex;
+      list-style: none;
+      align-items: center;
+      height: 100%;
+      gap: clamp(14px, 2vw, 28px);
+    }
+
+    .nav-links a {
+      font-size: clamp(12px, 1vw, 15px);
+      font-weight: 700;
+      text-decoration: none;
+      letter-spacing: 0.8px;
+      padding-bottom: 3px;
+      transition: color 0.3s ease, border-color 0.3s ease;
+      border-bottom: 2px solid transparent;
+    }
+
+    .lang-dropdown { position: relative; display: inline-block; }
+    .lang-dropdown-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: clamp(12px, 1vw, 15px);
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding-bottom: 3px;
+    }
+
+    .lang-dropdown-content {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 100%;
+      background-color: rgba(20, 20, 30, 0.95);
+      min-width: 120px;
+      box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+      border-radius: 8px;
+      overflow: hidden;
+      z-index: 101;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .lang-dropdown-content button {
+      color: #fff;
+      padding: 10px 16px;
+      text-decoration: none;
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .lang-dropdown-content button:hover { background-color: rgba(212, 175, 55, 0.3); }
+    .lang-dropdown:hover .lang-dropdown-content { display: block; }
+
+    /* 3. CELESTIAL SKY TRACKING */
+    .celestial-sky-box {
+      position: fixed;
+      top: 10vh;
+      left: 0;
+      width: 100vw;
+      height: 120px;
+      z-index: 15;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    .sun {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #ffffff 20%, #fff280 50%, #ffaa00 100%);
+      box-shadow: 0 0 40px #ffaa00, 0 0 80px #ff7700;
+      will-change: transform;
+    }
+
+    /* Moon structure with real phase shadow layer */
+    .moon-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 80px;
+      height: 80px;
+      will-change: transform;
+    }
+
+    .moon-body {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: #fdfdfd;
+      box-shadow: 0 0 25px rgba(255, 255, 255, 0.8);
+      overflow: hidden;
+    }
+
+    .moon-shadow {
+      position: absolute;
+      top: -10%;
+      left: -10%;
+      width: 120%;
+      height: 120%;
+      background: #080a10;
+      border-radius: 50%;
+      transition: transform 0.05s linear;
+    }
+
+    /* 4. MAIN PANCHANGAM BOOK CONTAINER */
+    .main-wrapper {
+      position: relative;
+      z-index: 20;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;    
+      justify-content: center; 
+      padding-top: 60px;
+    }
+
+    .book-and-action-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;              
+      width: 100%;
+      max-width: 620px;       
+      margin: 0 auto;
+    }
+
+    .panchangam-book {
+      position: relative;
+      z-index: 60;
+      width: 100%;
+      display: flex;
+      border-radius: 12px;
+      padding: 24px clamp(16px, 2.2vw, 30px);
+      transition: background 1s ease, border-color 1s ease, color 1s ease, box-shadow 1s ease;
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+    }
+
+    .panchangam-book::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 2px;
+      height: 100%;
+      background: linear-gradient(to bottom, transparent, rgba(212, 175, 55, 0.5), transparent);
+      z-index: 5;
+    }
+
+    .book-corner {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #d4af37;
+      pointer-events: none;
+    }
+    .top-left { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+    .top-right { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+    .bottom-left { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+    .bottom-right { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+
+    .book-page {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 0 8px;
+    }
+
+    .book-page.left-page {
+      text-align: center;
+      border-right: 1px dashed rgba(212, 175, 55, 0.3);
+      padding-right: clamp(10px, 1.5vw, 18px);
+      align-items: center;
+    }
+
+    .book-page.right-page {
+      padding-left: clamp(10px, 1.5vw, 18px);
+    }
+
+    .panchangam-book.day-theme {
+      background: rgba(255, 248, 230, 0.35);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1.5px solid rgba(128, 0, 0, 0.3);
+      color: #4a0000;
+      box-shadow: 0 15px 35px rgba(128, 0, 0, 0.15), inset 0 0 25px rgba(255, 255, 255, 0.3);
+      text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+    }
+
+    .panchangam-book.day-theme .sub-heading {
+      border-bottom-color: rgba(128, 0, 0, 0.3);
+      color: #700000;
+    }
+
+    .panchangam-book.day-theme .panchangam-row {
+      border-bottom: 1px dashed rgba(128, 0, 0, 0.2);
+    }
+
+    .panchangam-book.night-theme {
+      background: rgba(10, 12, 24, 0.45);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1.5px solid rgba(255, 255, 255, 0.25);
+      color: #ffffff;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.7), inset 0 0 25px rgba(255, 255, 255, 0.08);
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+    }
+
+    .panchangam-book.night-theme .sub-heading {
+      border-bottom-color: rgba(255, 255, 255, 0.35);
+      color: #ffffff;
+    }
+
+    .panchangam-book.night-theme .panchangam-row {
+      border-bottom: 1px dashed rgba(255, 255, 255, 0.2);
+    }
+
+    .main-heading {
+      font-size: clamp(18px, 2vw, 24px);
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 3px;
+      line-height: 1.2;
+    }
+
+    .sub-heading {
+      font-size: clamp(11px, 1vw, 13px);
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+      opacity: 0.95;
+      border-bottom: 1.5px solid;
+      padding-bottom: 3px;
+      display: inline-block;
+    }
+
+    .date-badge {
+      font-size: clamp(11px, 1vw, 13px);
+      font-weight: 800;
+      margin: 6px 0 10px 0;
+      padding: 4px 12px;
+      border-radius: 6px;
+      background: rgba(212, 175, 55, 0.2);
+      border: 1px solid rgba(212, 175, 55, 0.5);
+      display: inline-block;
+      letter-spacing: 0.5px;
+    }
+
+    .om-logo-img {
+      max-width: clamp(45px, 5vw, 65px);
+      height: auto;
+      object-fit: contain;
+      margin-top: 4px;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+    }
+
+    .panchangam-details {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: clamp(11px, 0.9vw, 13.5px);
+      font-weight: 500;
+    }
+
+    .panchangam-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 3px;
+    }
+
+    .panchangam-row:last-child {
+      border-bottom: none;
+    }
+
+    .panchangam-label { font-weight: 700; opacity: 0.9; }
+    .panchangam-value { font-weight: 700; }
+
+    .btn-full-panchangam {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 32px;
+      font-size: clamp(13px, 1.1vw, 15px);
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      text-decoration: none;
+      color: #ffffff;
+      background: linear-gradient(135deg, #800000 0%, #4a0000 100%);
+      border: 1.5px solid #d4af37;
+      border-radius: 25px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), inset 0 0 10px rgba(212, 175, 55, 0.3);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    }
+
+    .btn-full-panchangam:hover {
+      transform: translateY(-2px);
+      background: linear-gradient(135deg, #a00000 0%, #600000 100%);
+      box-shadow: 0 6px 20px rgba(212, 175, 55, 0.5), inset 0 0 15px rgba(255, 215, 0, 0.5);
+      border-color: #ffd700;
+    }
+
+    /* 5. KALA CHAKRA WHEEL */
+    .panchangam-clock-container {
+      position: absolute;
+      right: 2%;
+      top: 55%;
+      transform: translateY(-50%);
+      width: min(52vw, 50vh, 360px);
+      height: min(52vw, 50vh, 360px);
+      z-index: 50;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border-radius: 50%;
+      background: radial-gradient(circle, #2a1405 0%, #110702 70%, #050201 100%);
+      border: clamp(3px, 0.8vw, 6px) solid #d4af37;
+      box-shadow: 0 0 35px rgba(0, 0, 0, 0.9), 0 0 15px #b8860b;
+      flex-shrink: 0;
+    }
+
+    .clock-pointer {
+      position: absolute;
+      top: -12px;
+      width: 0;
+      height: 0;
+      border-left: clamp(8px, 1.2vw, 12px) solid transparent;
+      border-right: clamp(8px, 1.2vw, 12px) solid transparent;
+      border-top: clamp(18px, 2.5vw, 28px) solid #ffd700;
+      z-index: 70;
+      filter: drop-shadow(0 4px 6px rgba(0,0,0,0.9));
+    }
+
+    .outer-brass-ring {
+      position: absolute;
+      width: 96%;
+      height: 96%;
+      border-radius: 50%;
+      border: 2px solid rgba(212, 175, 55, 0.5);
+      box-shadow: inset 0 0 15px rgba(0,0,0,0.8);
+      pointer-events: none;
+    }
+
+    .outer-wheel {
+      position: absolute;
+      width: 93%;
+      height: 93%;
+      border-radius: 50%;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 410 410' width='410' height='410'><defs><radialGradient id='outerBg' cx='50%' cy='50%' r='50%'><stop offset='0%' stop-color='%23211005'/><stop offset='70%' stop-color='%23120702'/><stop offset='100%' stop-color='%23050201'/></radialGradient><radialGradient id='goldRim' cx='50%' cy='50%' r='50%'><stop offset='90%' stop-color='%23d4af37' stop-opacity='0.8'/><stop offset='95%' stop-color='%23aa7c11' stop-opacity='0.9'/><stop offset='100%' stop-color='%235a3d06' stop-opacity='1'/></radialGradient></defs><circle cx='205' cy='205' r='202' fill='url(%23outerBg)' stroke='url(%23goldRim)' stroke-width='4'/><circle cx='205' cy='205' r='190' fill='none' stroke='%23d4af37' stroke-width='1.5' stroke-dasharray='3,3' opacity='0.6'/><circle cx='205' cy='205' r='175' fill='none' stroke='%23b8860b' stroke-width='2' opacity='0.4'/><circle cx='205' cy='205' r='80' fill='none' stroke='%23d4af37' stroke-width='1.5' opacity='0.5'/></svg>");
+      background-size: cover;
+      background-position: center;
+    }
+
+    .time-spoke {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 28%;
+      height: 50%;
+      margin-left: -14%;
+      transform-origin: bottom center;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 10%;
+    }
+
+    .upright-content {
+      text-align: center;
+      transform-origin: center center;
+      width: 100%;
+    }
+
+    .label-title {
+      font-size: clamp(8px, 1.1vw, 11px);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      display: block;
+      line-height: 1.1;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+    }
+
+    .label-time {
+      font-size: clamp(7px, 0.8vw, 8.5px);
+      font-weight: 700;
+      display: block;
+      margin-top: 2px;
+      opacity: 0.95;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+
+    .auspicious .label-title { color: #5cdb95; text-shadow: 0 0 6px rgba(0, 255, 100, 0.6); }
+    .auspicious .label-time { color: #d4f8e8; }
+
+    .inauspicious .label-title { color: #ff6b6b; text-shadow: 0 0 6px rgba(255, 0, 0, 0.6); }
+    .inauspicious .label-time { color: #ffd1d1; }
+
+    .inner-wheel {
+      position: absolute;
+      width: 38%;
+      height: 38%;
+      border-radius: 50%;
+      background: radial-gradient(circle, #3a1c07 0%, #1c0b02 60%, #0a0300 100%);
+      border: 2px solid #ffd700;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 60;
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.9), inset 0 0 10px #b8860b;
+    }
+
+    .digital-time {
+      font-size: clamp(9px, 1.2vw, 12px);
+      color: #ffd700;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-shadow: 0 0 8px rgba(255, 215, 0, 0.6);
+      text-align: center;
+    }
+
+    .date-display {
+      font-size: clamp(7px, 0.8vw, 9px);
+      color: #d4af37;
+      margin-top: 1px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 500;
+    }
+
+    .year-display {
+      font-size: clamp(6.5px, 0.7vw, 8.5px);
+      color: #ffd700;
+      font-weight: 700;
+      letter-spacing: 1px;
+      opacity: 0.9;
+    }
+
+    .period-status {
+      font-size: clamp(7px, 0.8vw, 9px);
+      margin-top: 2px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 1px 5px;
+      border-radius: 12px;
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid rgba(212, 175, 55, 0.6);
+      color: #ffd700;
+      text-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+      max-width: 92%;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 1024px) {
+      .celestial-bar { gap: 8px; padding-left: 10px; }
+      .celestial-label { display: none; }
+      .panchangam-clock-container { display: none; } 
+    }
+
+    @media (max-width: 768px) {
+      .main-navbar { height: auto; padding: 8px 3%; flex-wrap: wrap; }
+      .brand-container { width: 100%; justify-content: space-between; margin-bottom: 5px; }
+      .celestial-bar { border-left: none; padding-left: 0; }
+      .logo-img { max-height: 52px; }
+      .nav-links { gap: 12px; }
+    }
+    .panchangam-actions{
+        display:flex;
+        gap:15px;
+        align-items:center;
+        justify-content:center;
+        flex-wrap:wrap;
+    }
+
+    .date-picker{
+        padding:10px 18px;
+        border-radius:10px;
+        border:1px solid #d4af37;
+        background:rgba(255,255,255,0.95);
+        font-size:15px;
+    }
+    .modal{
+        display:none;
+        position:fixed;
+        left:0;
+        top:0;
+        width:100%;
+        height:100%;
+        background:rgba(0,0,0,.7);
+        z-index:9999;
+    }
+    .modal-content{
+        width:75%;
+        max-height:85vh;
+        overflow-y:auto;
+        margin:40px auto;
+        background:white;
+        padding:25px;
+        border-radius:15px;
+    }
+    #closeModal{
+        float:right;
+        font-size:30px;
+        cursor:pointer;
+        font-weight:bold;
+    }
+  </style>
+</head>
+<div id="panchangamModal" class="modal">
+    <div class="modal-content">
+        <span id="closeModal">&times;</span>
+        <h2>Full Panchangam</h2>
+        <div id="fullPanchangamContent"></div>
+    </div>
+</div>
+<body>
+
+  <div class="sky-viewport">
+    <nav class="main-navbar" id="mainNavbar">
+      <div class="brand-container">
+        <a href="#" class="brand-logo">
+          <img src="/static/Logo.webp" alt="Yagnika" class="logo-img">
+        </a>
+        <div class="celestial-bar" id="celestialBar"></div>
+      </div>
+
+      <ul class="nav-links">
+        <li><a href="#" class="active" id="nav-home">Home</a></li>
+        <li><a href="#" id="nav-panchangam">Panchangam</a></li>
+        <li class="lang-dropdown">
+          <button class="lang-dropdown-btn" id="langBtn">Languages ▼</button>
+          <div class="lang-dropdown-content">
+            <button onclick="setLanguage('en')">English</button>
+            <button onclick="setLanguage('te')">తెలుగు (Telugu)</button>
+          </div>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Background Images -->
+    <div class="bg-layer bg-morning" id="bgMorning"></div>
+    <div class="bg-layer bg-afternoon" id="bgAfternoon"></div>
+    <div class="bg-layer bg-evening" id="bgEvening"></div>
+    <div class="bg-layer bg-night" id="bgNight"></div>
+
+    <!-- Isolated Dynamic Celestial Track -->
+    <div class="celestial-sky-box" id="celestialSkyBox">
+      <div class="sun" id="sunIcon"></div>
+      <div class="moon-container" id="moonContainer">
+        <div class="moon-body">
+          <div class="moon-shadow" id="moonShadow"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Centered Book and Redirect Button -->
+    <div class="main-wrapper">
+      <div class="book-and-action-container">
+        <div class="panchangam-book" id="panchangamCard">
+          <div class="book-corner top-left"></div>
+          <div class="book-corner top-right"></div>
+          <div class="book-corner bottom-left"></div>
+          <div class="book-corner bottom-right"></div>
+
+          <div class="book-page left-page">
+            <h1 class="main-heading" id="greetingHeading">Good Morning</h1>
+            <h2 class="sub-heading" id="subHeading">Today's Yagnika Panchangam</h2>
+            <div class="date-badge" id="todayDateDisplay"></div>
+            <img src="/static/Om_Logo.webp" alt="Om" class="om-logo-img">
+          </div>
+
+          <div class="book-page right-page">
+            <div class="panchangam-details">
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-samvatsaram">Samvatsaram:</span>
+                <span class="panchangam-value" id="val-samvatsaram">Krodhi</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-ayanam">Ayanam:</span>
+                <span class="panchangam-value" id="val-ayanam">Dakshinayanam</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-rithuvu">Rithuvu:</span>
+                <span class="panchangam-value" id="val-rithuvu">Varsha Ritu</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-masam">Masam:</span>
+                <span class="panchangam-value" id="val-masam">Ashadha Masam</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-paksham">Paksham:</span>
+                <span class="panchangam-value" id="val-paksham">Shukla Paksham</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-thidhi">Thidhi:</span>
+                <span class="panchangam-value" id="val-thidhi">Saptami</span>
+              </div>
+              <div class="panchangam-row">
+                <span class="panchangam-label" id="lbl-nakshatram">Nakshatram:</span>
+                <span class="panchangam-value" id="val-nakshatram">Chitra</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="panchangam-actions">
+            <input
+                type="date"
+                id="selectedDate"
+                class="date-picker">
+
+            <button
+                id="btnFullPanchangam"
+                class="btn-full-panchangam">
+                Get Panchangam
+            </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Kala Chakra Wheel -->
+    <div class="panchangam-clock-container">
+      <div class="clock-pointer"></div>
+      <div class="outer-brass-ring"></div>
+      
+      <div class="outer-wheel" id="outerWheel">
+        <div class="time-spoke auspicious" style="transform: rotate(0deg);">
+          <div class="upright-content" style="transform: rotate(0deg);">
+            <span class="label-title" id="wheel-bramha">Bramha Muhurtham</span>
+            <span class="label-time">04:24 AM - 05:12 AM</span>
+          </div>
+        </div>
+        <div class="time-spoke inauspicious" style="transform: rotate(45deg);">
+          <div class="upright-content" style="transform: rotate(-45deg);">
+            <span class="label-title" id="wheel-durmuhurtham">Durmuhurtham</span>
+            <span class="label-time">08:30 AM - 09:20 AM</span>
+          </div>
+        </div>
+        <div class="time-spoke auspicious" style="transform: rotate(90deg);">
+          <div class="upright-content" style="transform: rotate(-90deg);">
+            <span class="label-title" id="wheel-abhijith">Abhijith Lagnam</span>
+            <span class="label-time">11:45 AM - 12:35 PM</span>
+          </div>
+        </div>
+        <div class="time-spoke inauspicious" style="transform: rotate(135deg);">
+          <div class="upright-content" style="transform: rotate(-135deg);">
+            <span class="label-title" id="wheel-yamagandam">Yamagandam</span>
+            <span class="label-time">12:00 PM - 01:30 PM</span>
+          </div>
+        </div>
+        <div class="time-spoke inauspicious" style="transform: rotate(180deg);">
+          <div class="upright-content" style="transform: rotate(-180deg);">
+            <span class="label-title" id="wheel-gulika">Gulika Kalam</span>
+            <span class="label-time">01:30 PM - 03:00 PM</span>
+          </div>
+        </div>
+        <div class="time-spoke auspicious" style="transform: rotate(225deg);">
+          <div class="upright-content" style="transform: rotate(-225deg);">
+            <span class="label-title" id="wheel-amrita">Amrita Kalam</span>
+            <span class="label-time">02:15 PM - 03:45 PM</span>
+          </div>
+        </div>
+        <div class="time-spoke inauspicious" style="transform: rotate(270deg);">
+          <div class="upright-content" style="transform: rotate(-270deg);">
+            <span class="label-title" id="wheel-rahu">Rahu Kalam</span>
+            <span class="label-time">04:30 PM - 06:00 PM</span>
+          </div>
+        </div>
+        <div class="time-spoke inauspicious" style="transform: rotate(315deg);">
+          <div class="upright-content" style="transform: rotate(-315deg);">
+            <span class="label-title" id="wheel-varjyam">Varjyam</span>
+            <span class="label-time">07:10 PM - 08:40 PM</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="inner-wheel">
+        <div class="digital-time" id="clockTime">12:00:00 AM</div>
+        <div class="date-display" id="clockDate">00 MMM</div>
+        <div class="year-display" id="clockYear">2026</div>
+        <div class="period-status" id="currentPeriodStatus">Kala Chakra</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentLang = 'en';
+
+    const i18n = {
+      en: {
+        navHome: "Home",
+        navPanchangam: "Panchangam",
+        langBtn: "Languages ▼",
+        goodMorning: "Good Morning",
+        goodAfternoon: "Good Afternoon",
+        goodEvening: "Good Evening",
+        goodNight: "Good Night",
+        subHeading: "Today's Yagnika Panchangam",
+        lblSamvatsaram: "Samvatsaram:",
+        valSamvatsaram: "Krodhi",
+        lblAyanam: "Ayanam:",
+        valAyanam: "Dakshinayanam",
+        lblRithuvu: "Rithuvu:",
+        valRithuvu: "Varsha Ritu",
+        lblMasam: "Masam:",
+        valMasam: "Ashadha Masam",
+        lblPaksham: "Paksham:",
+        valPaksham: "Shukla Paksham",
+        lblThidhi: "Thidhi:",
+        valThidhi: "Saptami",
+        lblNakshatram: "Nakshatram:",
+        valNakshatram: "Chitra",
+        btnFullPanchangam: "Full Panchangam",
+        bramha: "Bramha Muhurtham",
+        durmuhurtham: "Durmuhurtham",
+        abhijith: "Abhijith Lagnam",
+        yamagandam: "Yamagandam",
+        gulika: "Gulika Kalam",
+        amrita: "Amrita Kalam",
+        rahu: "Rahu Kalam",
+        varjyam: "Varjyam",
+        sunrise: "Sunrise:",
+        sunset: "Sunset:",
+        solarNoon: "Solar Noon:",
+        dayLength: "Day Length:",
+        moonrise: "Moonrise:",
+        moonset: "Moonset:",
+        lunarNoon: "Lunar Noon:",
+        nightLength: "Night Length:"
+      },
+      te: {
+        navHome: "ముఖ్య పుట",
+        navPanchangam: "పంచాంగం",
+        langBtn: "భాషలు ▼",
+        goodMorning: "శుభోదయం",
+        goodAfternoon: "శుభ మధ్యాహ్నం",
+        goodEvening: "శుభ సాయంత్రం",
+        goodNight: "శుభ రాత్రి",
+        subHeading: "నేటి యాజ్ఞిక పంచాంగం",
+        lblSamvatsaram: "సంవత్సరం:",
+        valSamvatsaram: "క్రోధి",
+        lblAyanam: "అయనం:",
+        valAyanam: "దక్షిణాయనం",
+        lblRithuvu: "ఋతువు:",
+        valRithuvu: "వర్ష ఋతువు",
+        lblMasam: "మాసం:",
+        valMasam: "ఆషాఢ మాసం",
+        lblPaksham: "పక్షం:",
+        valPaksham: "శుక్ల పక్షం",
+        lblThidhi: "తిథి:",
+        valThidhi: "సప్తమి",
+        lblNakshatram: "నక్షత్రం:",
+        valNakshatram: "చిత్త",
+        btnFullPanchangam: "సంపూర్ణ పంచాంగం",
+        bramha: "బ్రహ్మ ముహూర్తం",
+        durmuhurtham: "దుర్ముహూర్తం",
+        abhijith: "అభిజిత్ లగ్నం",
+        yamagandam: "యమగండం",
+        gulika: "గుళిక కాలం",
+        amrita: "అమృత కాలం",
+        rahu: "రాహు కాలం",
+        varjyam: "వర్జ్యం",
+        sunrise: "సూర్యోదయం:",
+        sunset: "సూర్యాస్తమయం:",
+        solarNoon: "మధ్యాహ్నం:",
+        dayLength: "పగటి సమయం:",
+        moonrise: "చంద్రోదయం:",
+        moonset: "చంద్రాస్తమయం:",
+        lunarNoon: "అర్థరాత్రి:",
+        nightLength: "రాత్రి సమయం:"
+      }
+    };
+
+    function setLanguage(lang) {
+      currentLang = lang;
+      const dict = i18n[lang];
+      currentLanguage = this.value;
+      renderPanchangam(currentPanchangam);
+      if (!dict) return;
+
+      document.getElementById('nav-home').innerText = dict.navHome;
+      document.getElementById('nav-panchangam').innerText = dict.navPanchangam;
+      document.getElementById('langBtn').innerText = dict.langBtn;
+      document.getElementById('subHeading').innerText = dict.subHeading;
+      document.getElementById('lbl-samvatsaram').innerText = dict.lblSamvatsaram;
+    //   document.getElementById('val-samvatsaram').innerText = dict.valSamvatsaram;
+      document.getElementById('lbl-ayanam').innerText = dict.lblAyanam;
+    //   document.getElementById('val-ayanam').innerText = dict.valAyanam;
+      document.getElementById('lbl-rithuvu').innerText = dict.lblRithuvu;
+    //   document.getElementById('val-rithuvu').innerText = dict.valRithuvu;
+      document.getElementById('lbl-masam').innerText = dict.lblMasam;
+    //   document.getElementById('val-masam').innerText = dict.valMasam;
+      document.getElementById('lbl-paksham').innerText = dict.lblPaksham;
+    //   document.getElementById('val-paksham').innerText = dict.valPaksham;
+      document.getElementById('lbl-thidhi').innerText = dict.lblThidhi;
+    //   document.getElementById('val-thidhi').innerText = dict.valThidhi;
+      document.getElementById('lbl-nakshatram').innerText = dict.lblNakshatram;
+    //   document.getElementById('val-nakshatram').innerText = dict.valNakshatram;
+      document.getElementById('btnFullPanchangam').innerText = dict.btnFullPanchangam;
+
+      document.getElementById('wheel-bramha').innerText = dict.bramha;
+      document.getElementById('wheel-durmuhurtham').innerText = dict.durmuhurtham;
+      document.getElementById('wheel-abhijith').innerText = dict.abhijith;
+      document.getElementById('wheel-yamagandam').innerText = dict.yamagandam;
+      document.getElementById('wheel-gulika').innerText = dict.gulika;
+      document.getElementById('wheel-amrita').innerText = dict.amrita;
+      document.getElementById('wheel-rahu').innerText = dict.rahu;
+      document.getElementById('wheel-varjyam').innerText = dict.varjyam;
+    }
+
+    const startTime = performance.now();
+
+    function updateCelestialCycle() {
+      const now = new Date();
+      const windowWidth = window.innerWidth;
+      
+      const celestialWidth = 80; 
+      const startX = -celestialWidth;
+      const endX = windowWidth;
+      const totalDistance = endX - startX;
+
+      const elapsedSeconds = (performance.now() - startTime) / 1000;
+      const cycleTime = elapsedSeconds % 120; // Total 120s loop (60s Sun, 60s Moon)
+
+      const bgMorning = document.getElementById('bgMorning');
+      const bgAfternoon = document.getElementById('bgAfternoon');
+      const bgEvening = document.getElementById('bgEvening');
+      const bgNight = document.getElementById('bgNight');
+      const greetingHeading = document.getElementById('greetingHeading');
+
+      const sunIcon = document.getElementById('sunIcon');
+      const moonContainer = document.getElementById('moonContainer');
+      const moonShadow = document.getElementById('moonShadow');
+      const dict = i18n[currentLang];
+
+      bgMorning.classList.remove('active');
+      bgAfternoon.classList.remove('active');
+      bgEvening.classList.remove('active');
+      bgNight.classList.remove('active');
+
+      if (cycleTime < 60) {
+        // SUN CYCLE (0s to 60s)
+        let progress = cycleTime / 60;
+        let sunX = startX + (progress * totalDistance);
+
+        sunIcon.style.display = 'block';
+        sunIcon.style.transform = `translateX(${sunX}px)`;
+
+        moonContainer.style.display = 'none';
+
+        if (cycleTime < 30) {
+          bgMorning.classList.add('active');
+          applyTheme('day');
+          greetingHeading.innerText = dict.goodMorning;
+          setCelestialInfo(dict.sunrise, "06:00 AM", dict.sunset, "06:30 PM", dict.solarNoon, "12:15 PM", dict.dayLength, "12h 30m");
+        } else if (cycleTime >= 30 && cycleTime < 50) {
+          bgAfternoon.classList.add('active');
+          applyTheme('day');
+          greetingHeading.innerText = dict.goodAfternoon;
+          setCelestialInfo(dict.sunrise, "06:00 AM", dict.sunset, "06:30 PM", dict.solarNoon, "12:15 PM", dict.dayLength, "12h 30m");
+        } else {
+          bgEvening.classList.add('active');
+          applyTheme('night');
+          greetingHeading.innerText = dict.goodEvening;
+          setCelestialInfo(dict.sunset, "06:30 PM", dict.moonrise, "07:15 PM", dict.solarNoon, "12:15 PM", dict.dayLength, "12h 30m");
+        }
+
+      } else {
+        // MOON CYCLE (60s to 120s)
+        let moonTime = cycleTime - 60; // Local 0s to 60s
+        let progress = moonTime / 60;
+        let moonX = startX + (progress * totalDistance);
+
+        sunIcon.style.display = 'none';
+        moonContainer.style.display = 'block';
+        moonContainer.style.transform = `translateX(${moonX}px)`;
+
+        bgNight.classList.add('active');
+        applyTheme('night');
+        greetingHeading.innerText = dict.goodNight;
+        setCelestialInfo(dict.moonrise, "07:15 PM", dict.moonset, "06:10 AM", dict.lunarNoon, "12:00 AM", dict.nightLength, "11h 30m");
+
+        // MOON PHASE TRANSITION LOGIC
+        // 0s to 30s: Dark/Crescent -> Full Moon (Shadow moves completely away)
+        // 30s to 58s: Full Moon -> Dark Circle (Shadow covers moon completely)
+        // 58s to 60s: Fully dark moon exits off right edge
+        let shadowX = 0;
+
+        if (moonTime <= 30) {
+          let phaseProgress = moonTime / 30; // 0 to 1
+          shadowX = phaseProgress * 100; // Slide shadow right off the face
+        } else if (moonTime <= 58) {
+          let phaseProgress = (moonTime - 30) / 28; // 0 to 1
+          shadowX = 100 - (phaseProgress * 100); // Slide shadow back to cover face
+        } else {
+          shadowX = 0; // Fully dark
+        }
+
+        moonShadow.style.transform = `translateX(${shadowX}%)`;
+      }
+
+      const timeStr = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const dateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+      const yearStr = now.getFullYear();
+
+      document.getElementById('clockTime').innerText = timeStr;
+      document.getElementById('clockDate').innerText = dateStr;
+      document.getElementById('clockYear').innerText = yearStr;
+      document.getElementById('todayDateDisplay').innerText = `${dateStr}, ${yearStr}`;
+
+      requestAnimationFrame(updateCelestialCycle);
+    }
+
+    function applyTheme(theme) {
+      const navbar = document.getElementById('mainNavbar');
+      const bookCard = document.getElementById('panchangamCard');
+
+      if (theme === 'day') {
+        navbar.classList.add('day-theme');
+        navbar.classList.remove('night-theme');
+        bookCard.classList.add('day-theme');
+        bookCard.classList.remove('night-theme');
+      } else {
+        navbar.classList.add('night-theme');
+        navbar.classList.remove('day-theme');
+        bookCard.classList.add('night-theme');
+        bookCard.classList.remove('day-theme');
+      }
+    }
+
+    function setCelestialInfo(l1, v1, l2, v2, l3, v3, l4, v4) {
+      const celestialBar = document.getElementById('celestialBar');
+      celestialBar.innerHTML = `
+        <div class="celestial-item">
+          <span class="celestial-label">${l1}</span>
+          <span class="celestial-val">${v1}</span>
+        </div>
+        <div class="celestial-item">
+          <span class="celestial-label">${l2}</span>
+          <span class="celestial-val">${v2}</span>
+        </div>
+        <div class="celestial-item">
+          <span class="celestial-label">${l3}</span>
+          <span class="celestial-val">${v3}</span>
+        </div>
+        <div class="celestial-item">
+          <span class="celestial-label">${l4}</span>
+          <span class="celestial-val">${v4}</span>
+        </div>
+      `;
+    }
+    
+    function renderPanchangam(data) {
+        if (!data) return;
+        const lang = currentLang;
+        // Panchangam summary
+        console.log(data);  
+        document.getElementById("val-samvatsaram").innerText=data.general.samvatsara[lang];
+        document.getElementById("val-ayanam").innerText=data.general.ayanam[lang];
+        document.getElementById("val-rithuvu").innerText=data.general.ritu[lang];
+        document.getElementById("val-masam").innerText=data.general.masa[lang];
+        document.getElementById("val-paksham").innerText=data.general.paksha[lang];
+        document.getElementById("val-thidhi").innerText=data.general.tithi[lang] + " " + data.general.tithi_till[lang];
+        document.getElementById("val-nakshatram").innerText=data.general.nakshatra[lang] + " " + data.general.nakshatra_till[lang];
+        // Top navigation
+        // document.getElementById("sunriseTop").textContent = data.solar.sunrise;
+        // document.getElementById("sunsetTop").textContent = data.solar.sunset;
+        // Selected date
+        document.getElementById("todayDateDisplay").textContent = data.date;
+    }
+    
+    async function loadPanchangam(date){
+        const response = await fetch(`/api/panchangam?date=${date}`);
+        const data = await response.json();
+        // Update summary card
+        currentPanchangam = data;
+        // renderPanchangam(currentPanchangam);
+        return data;
+    }
+    requestAnimationFrame(updateCelestialCycle);
+    document.getElementById("selectedDate").value = new Date().toISOString().split("T")[0];
+    window.addEventListener("DOMContentLoaded", async () => {
+        const today = new Date().toISOString().split("T")[0];
+        document.getElementById("selectedDate").value = today;
+        currentPanchangam = await loadPanchangam(today);
+        renderPanchangam(currentPanchangam);
+    });
+    document.getElementById("btnFullPanchangam").addEventListener("click", async ()=>{
+        const date=document.getElementById("selectedDate").value;
+        const data = await loadPanchangam(date);
+        document.getElementById("fullPanchangamContent").innerHTML=`
+        <table class="table">
+            <tr><td>Samvatsaram</td><td>${data.general.samvatsara[currentLang]}</td></tr>
+            <tr><td>Ayanam</td><td>${data.general.ayanam[currentLang]}</td></tr>
+            <tr><td>Rithuvu</td><td>${data.general.ritu[currentLang]}</td></tr>
+            <tr><td>Masam</td><td>${data.general.masa[currentLang]}</td></tr>
+            <tr><td>Paksham</td><td>${data.general.paksha[currentLang]}</td></tr>
+            <tr><td>Thidhi</td><td>${data.general.tithi[currentLang] + " " + data.general.tithi_till[currentLang]}</td></tr>
+            <tr><td>Nakshatram</td><td>${data.general.nakshatra[currentLang] + " " + data.general.nakshatra_till[currentLang]}</td></tr>
+            <tr><td>Yogam</td><td>${data.general.yoga[currentLang] + " " + data.general.yoga_till[currentLang]}</td></tr>
+            <tr><td>Karanam</td><td>${data.general.karana[currentLang] + " " + data.general.karana_till[currentLang]}</td></tr>
+            <tr><td>Sunrise</td><td>${data.solar.sunrise}</td></tr>
+            <tr><td>Sunset</td><td>${data.solar.sunset}</td></tr>
+            <tr><td>Moonrise</td><td>${data.lunar.moonrise}</td></tr>
+            <tr><td>Moonset</td><td>${data.lunar.moonset}</td></tr>
+            <tr><td>Rahukalam</td><td>${data.kalas.rahukalam}</td></tr>
+            <tr><td>Yamagandam</td><td>${data.kalas.yamagandam}</td></tr>
+            <tr><td>Gulika Kalam</td><td>${data.kalas.gulika}</td></tr>
+            <tr><td>Durmuhurtham</td><td>${data.kalas.durmuhurtham}</td></tr>
+            <tr><td>Varjyam</td><td>${data.kalas.varjyam}</td></tr>
+            <tr><td>Amrita Kalam</td><td>${data.kalas.amrita}</td></tr>
+        </table>
+        `;
+        document.getElementById("panchangamModal").style.display="block";
+    });
+    document.getElementById("closeModal").onclick=function(){
+        document.getElementById("panchangamModal").style.display="none";
+    }
+    window.onclick=function(e){
+        if(e.target==document.getElementById("panchangamModal"))
+            document.getElementById("panchangamModal").style.display="none";
+    }
+    // document.getElementById("langBtn").addEventListener("change", function () {
+    //     currentLanguage = this.value;
+    //     renderPanchangam(currentPanchangam);
+    // });
+  </script>
+</body>
+</html>

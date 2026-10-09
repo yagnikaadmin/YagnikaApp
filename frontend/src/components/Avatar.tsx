@@ -23,7 +23,7 @@ export default function Avatar({ photoUrl, role = 'devotee', title, size = 56, r
     <View style={[styles.ring, { width: size, height: size, borderRadius: size / 2, borderColor: ringColor }]}>
       <Image source={{ uri }} style={{ width: '100%', height: '100%', borderRadius: size / 2 }} contentFit="cover" transition={150} />
       {busy && (
-        <View style={[StyleSheet.absoluteFillObject, styles.busyOverlay, { borderRadius: size / 2 }]}>
+        <View style={[StyleSheet.absoluteFill, styles.busyOverlay, { borderRadius: size / 2 }]}>
           <ActivityIndicator color="#FFF" size="small" />
         </View>
       )}

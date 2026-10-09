@@ -46,14 +46,13 @@ export default function Home() {
             <Text style={styles.cardTitleDark}>Yajmana (Devotee)</Text>
             <Text style={styles.cardSubDark}>Book sacred poojas and receive blessings from Yagnikas</Text>
           </View>
-          {/* Devotee flow is inactive in this build (screens kept in codebase). */}
           <View style={styles.cardBottom}>
-            <View style={[styles.primaryBtn, { backgroundColor: colors.gray200 }]}>
-              <Text style={[styles.primaryBtnText, { color: colors.gray500 }]}>Currently Unavailable</Text>
-            </View>
-            <View style={styles.linkBtn}>
-              <Text style={[styles.linkText, { color: colors.gray400 }]}>Devotee access disabled</Text>
-            </View>
+            <Pressable testID="btn-register-devotee" onPress={() => router.push('/register')} style={({ pressed }) => [styles.primaryBtn, { backgroundColor: colors.orange }, pressed && { opacity: 0.9 }]}>
+              <Text style={[styles.primaryBtnText, { color: '#FFF' }]}>Register as Devotee</Text>
+            </Pressable>
+            <Pressable testID="btn-login-devotee" onPress={() => router.push('/login?role=devotee')} style={styles.linkBtn}>
+              <Text style={styles.linkText}>Already registered? Login</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -69,6 +68,9 @@ export default function Home() {
           <View style={styles.cardBottom}>
             <Pressable testID="btn-register-priest" onPress={() => router.push('/priest-register')} style={({ pressed }) => [styles.primaryBtn, { backgroundColor: colors.darkRed }, pressed && { opacity: 0.9 }]}>
               <Text style={[styles.primaryBtnText, { color: '#FFF' }]}>Register as Priest</Text>
+            </Pressable>
+            <Pressable testID="btn-login-priest" onPress={() => router.push('/login?role=priest')} style={styles.linkBtn}>
+              <Text style={styles.linkText}>Already registered? Login</Text>
             </Pressable>
           </View>
         </View>

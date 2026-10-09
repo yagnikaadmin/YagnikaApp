@@ -80,6 +80,10 @@ class UserPublic(BaseModel):
     is_active: bool = True
     title: Optional[Literal["mr", "mrs"]] = None
     photo_url: Optional[str] = None
+    # Devotee-facing profile field (also captured per-booking as `gothram`).
+    gothram: Optional[str] = None
+    # Priest-only: pending | approved | rejected (None for legacy/devotee).
+    approval_status: Optional[str] = None
     # Priest-only: true while they have a "Priest Assigned" booking that
     # hasn't been marked Completed yet. A busy priest is excluded from new
     # booking eligibility until it flips back to false (see accept_booking
@@ -108,6 +112,9 @@ class DevoteeRegister(BaseModel):
 # still bounding request size against abuse. (Defined here too because the
 # priest photo field below is declared before ProfileUpdate.)
 MAX_PHOTO_DATA_URI_LEN = 1_500_000
+# Aadhaar proof: 2 MB binary ~= 2.67 MB of base64; allow headroom for the
+# data-URI prefix and whitespace.
+MAX_AADHAAR_PROOF_LEN = 2_900_000
 
 
 class PriestRegister(BaseModel):
@@ -120,6 +127,8 @@ class PriestRegister(BaseModel):
     name: str
     photo_url: Optional[str] = Field(default=None, max_length=MAX_PHOTO_DATA_URI_LEN)
     aadhaar_number: str
+    aadhaar_proof: str = Field(max_length=MAX_AADHAAR_PROOF_LEN)  # data URI (JPEG/PNG/PDF)
+    aadhaar_proof_name: Optional[str] = ""
     mobile: str
     address: str
     date_of_birth: str  # YYYY-MM-DD
@@ -130,7 +139,6 @@ class PriestRegister(BaseModel):
     sampradaya: str
     agama: str
     veda: str
-    shakha: str
     sutra: str
     gotra: str
     pravara: str
@@ -163,9 +171,46 @@ class PriestRegister(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
+    # Personal
     name: Optional[str] = None
     title: Optional[Literal["mr", "mrs"]] = None
     photo_url: Optional[str] = Field(default=None, max_length=MAX_PHOTO_DATA_URI_LEN)
+    # Devotee profile field (gothram / gotra).
+    gothram: Optional[str] = None
+    # Contact information
+    email: Optional[EmailStr] = None
+    mobile: Optional[str] = None
+    alt_mobile: Optional[str] = None
+    optional_email: Optional[str] = None
+    # Address
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    # Temple assignment / details
+    priest_type: Optional[Literal["independent", "temple"]] = None
+    temple_name: Optional[str] = None
+    temple_address: Optional[str] = None
+    temple_deity: Optional[str] = None
+    temple_designation: Optional[str] = None
+    # Service categories (list of poojas.id)
+    services: Optional[List[str]] = None
+    # Experience
+    years_of_experience: Optional[int] = Field(default=None, ge=0)
+    years_temple_service: Optional[int] = Field(default=None, ge=0)
+    # Languages
+    languages: Optional[List[str]] = None
+    # Availability
+    availability: Optional[str] = None
+    travel_availability: Optional[bool] = None
+    online_consultation: Optional[bool] = None
+    # Working status
+    working_status: Optional[Literal["available", "on_leave", "not_available"]] = None
+    # Certifications
+    certifications: Optional[str] = None
+    agama_certification: Optional[str] = None
+    veda_patashala: Optional[str] = None
+    guru_name: Optional[str] = None
+    awards: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -204,6 +249,10 @@ class Pooja(BaseModel):
     sanskrit_name: str = ""
     description: str = ""
     duration: str = ""
+    # Parsed from `duration` on the way out (see pooja_out) so the apps have a
+    # reliable number for slot / end-time math without re-implementing the
+    # free-text parser. Falls back to SLOT_MINUTES for blank/unparseable.
+    duration_minutes: int = 0
     price: int = 0
     is_active: bool = True
     # Service catalog grouping (present on the seeded priest-service
@@ -237,6 +286,12 @@ class BookingCreate(BaseModel):
     gothram: str
     place: str
     notes: Optional[str] = ""
+    # Devotee contact for this booking — pre-filled from the profile in the
+    # app but editable per booking; blank/absent falls back to the account's
+    # mobile. `latitude`/`longitude` are the venue pin from the map picker.
+    contact_mobile: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class Booking(BaseModel):
@@ -252,6 +307,8 @@ class Booking(BaseModel):
     gothram: str
     place: str
     notes: str = ""
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     status: BookingStatus
     priest_id: Optional[str] = None
     priest_name: Optional[str] = None
@@ -315,6 +372,8 @@ def user_doc_to_public(doc: dict) -> UserPublic:
         is_active=doc.get("is_active", True),
         title=doc.get("title"),
         photo_url=doc.get("photo_url"),
+        gothram=doc.get("gothram"),
+        approval_status=doc.get("approval_status"),
         busy=doc.get("busy", False),
     )
 
@@ -338,6 +397,25 @@ async def require_admin(current: UserPublic = Depends(get_current_user)) -> User
     if current.role != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return current
+
+
+async def get_current_user_any(token: str = Depends(oauth2_scheme)) -> dict:
+    """Like get_current_user but does NOT reject an inactive account. Used by
+    the priest "pending" screen so a not-yet-approved priest can still poll
+    their own registration status. Every other endpoint keeps using
+    get_current_user, which stays locked to active accounts only."""
+    exc = HTTPException(status_code=401, detail="Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise exc
+    except JWTError:
+        raise exc
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "hashed_password": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 
 
 # Fallback duration for bookings that predate the duration_minutes field
@@ -369,6 +447,11 @@ def parse_duration_to_minutes(duration: str) -> int:
     value = float(m.group(1))
     unit = m.group(2)
     return int(round(value * (60 if unit in ("hour", "hr") else 1)))
+
+
+def pooja_out(row: dict) -> "Pooja":
+    """Serialize a pooja doc for the API, injecting the parsed duration_minutes."""
+    return Pooja(**{**row, "duration_minutes": parse_duration_to_minutes(row.get("duration") or "")})
 
 
 def intervals_overlap(start_a: int, dur_a: int, start_b: int, dur_b: int) -> bool:
@@ -439,8 +522,7 @@ async def register_priest(payload: PriestRegister, request: Request):
     mandatory_text = {
         "name": payload.name, "address": payload.address,
         "sampradaya": payload.sampradaya, "agama": payload.agama, "veda": payload.veda,
-        "shakha": payload.shakha, "sutra": payload.sutra, "gotra": payload.gotra,
-        "pravara": payload.pravara,
+        "sutra": payload.sutra, "gotra": payload.gotra, "pravara": payload.pravara,
     }
     missing = [k for k, v in mandatory_text.items() if not (v or "").strip()]
     if missing:
@@ -449,6 +531,12 @@ async def register_priest(payload: PriestRegister, request: Request):
     aadhaar = AADHAAR_RE.sub("", payload.aadhaar_number or "")
     if len(aadhaar) != 12:
         raise HTTPException(status_code=400, detail="Aadhaar Number must be 12 digits")
+
+    proof = (payload.aadhaar_proof or "").strip()
+    if not proof.startswith(("data:image/jpeg", "data:image/jpg", "data:image/png", "data:application/pdf")):
+        raise HTTPException(status_code=400, detail="Aadhaar ID Proof must be a JPEG, PNG or PDF file.")
+    if len(proof) > MAX_AADHAAR_PROOF_LEN:
+        raise HTTPException(status_code=400, detail="Aadhaar ID Proof exceeds the 2 MB limit.")
 
     try:
         dob = datetime.strptime(payload.date_of_birth.strip(), "%Y-%m-%d").date()
@@ -460,11 +548,15 @@ async def register_priest(payload: PriestRegister, request: Request):
     if payload.priest_type == "temple" and not (payload.temple_name or "").strip():
         raise HTTPException(status_code=400, detail="Temple Name is required for a Temple Priest")
 
-    # validate services exist and are active
-    valid_ids = {p["id"] for p in await db.poojas.find({"id": {"$in": payload.services}, "is_active": True}, {"_id": 0, "id": 1}).to_list(5000)}
+    # Validate the selected services against the live catalog and make sure
+    # at least one main category is covered.
+    rows = await db.poojas.find(
+        {"id": {"$in": payload.services}, "is_active": True}, {"_id": 0, "id": 1, "category": 1}).to_list(5000)
+    valid_ids = {r["id"] for r in rows}
     services = [s for s in payload.services if s in valid_ids]
-    if not services:
-        raise HTTPException(status_code=400, detail="Select at least one valid service")
+    categories = {r.get("category") for r in rows if r.get("category")}
+    if not services or not categories:
+        raise HTTPException(status_code=400, detail="Select at least one service from a main category.")
 
     uid = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -474,11 +566,12 @@ async def register_priest(payload: PriestRegister, request: Request):
     profile = {
         "photo_url": payload.photo_url,
         "aadhaar_number": aadhaar,
+        "aadhaar_proof": proof,
+        "aadhaar_proof_name": (payload.aadhaar_proof_name or "").strip(),
         "date_of_birth": payload.date_of_birth.strip(),
         "sampradaya": payload.sampradaya.strip(),
         "agama": payload.agama.strip(),
         "veda": payload.veda.strip(),
-        "shakha": payload.shakha.strip(),
         "sutra": payload.sutra.strip(),
         "gotra": payload.gotra.strip(),
         "pravara": payload.pravara.strip(),
@@ -513,7 +606,10 @@ async def register_priest(payload: PriestRegister, request: Request):
         "latitude": payload.latitude,
         "longitude": payload.longitude,
         "services": services,
-        "is_active": True,
+        # New priests are inactive until an admin approves the registration
+        # (login stays blocked with a "pending approval" message meanwhile).
+        "is_active": False,
+        "approval_status": "pending",
         "hashed_password": hash_password(payload.password),
         "created_at": now_iso,
         **profile,
@@ -538,15 +634,20 @@ async def register_priest(payload: PriestRegister, request: Request):
         "latitude": payload.latitude,
         "longitude": payload.longitude,
         "services": services,
-        "status": "registered",
+        "status": "pending",           # pending | approved | rejected
+        "stage": "submitted",          # submitted -> interview -> approved | rejected
         "registered_at": now_iso,
+        "reviewed_at": None,
+        "review_note": "",
         **profile,
     }
     await db.priest_registration.insert_one(dict(reg_doc))
 
     user_pub = UserPublic(id=uid, name=payload.name.strip(), email=payload.email, mobile=payload.mobile.strip(), role="priest",
                           address=payload.address.strip(), latitude=payload.latitude, longitude=payload.longitude,
-                          services=services, is_active=True, photo_url=payload.photo_url)
+                          services=services, is_active=False, approval_status="pending", photo_url=payload.photo_url)
+    # Token is still issued (so the app can show a "pending" screen), but the
+    # account can't be used until approved.
     return Token(access_token=create_access_token(uid, "priest"), user=user_pub)
 
 
@@ -559,9 +660,33 @@ async def login(payload: UserLogin, request: Request):
     if not user or not verify_password(payload.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.get("is_active", True):
+        if user.get("approval_status") == "pending":
+            # Still issue a token so the app can show the 3-step "pending"
+            # screen and poll registration status. Every gated endpoint
+            # continues to reject the inactive account.
+            user_pub = user_doc_to_public(user)
+            return Token(access_token=create_access_token(user["id"], user["role"]), user=user_pub)
+        if user.get("approval_status") == "rejected":
+            raise HTTPException(status_code=403, detail="Your registration was not approved. Please contact the admin.")
         raise HTTPException(status_code=403, detail="Account is deactivated. Please contact admin.")
     user_pub = user_doc_to_public(user)
     return Token(access_token=create_access_token(user["id"], user["role"]), user=user_pub)
+
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
+
+
+@api_router.post("/admin/login", response_model=Token)
+async def admin_login(payload: AdminLogin, request: Request):
+    """Admin signs in with a username (not an email) — kept separate from the
+    devotee/priest email+role login above."""
+    await _check_rate_limit(request, "login", limit=10, window_seconds=300)
+    user = await db.users.find_one({"role": "admin", "username": payload.username})
+    if not user or not verify_password(payload.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    return Token(access_token=create_access_token(user["id"], "admin"), user=user_doc_to_public(user))
 
 
 @api_router.get("/auth/me", response_model=UserPublic)
@@ -569,11 +694,55 @@ async def me(current: UserPublic = Depends(get_current_user)):
     return current
 
 
+@api_router.get("/auth/me/full")
+async def me_full(current: UserPublic = Depends(get_current_user)):
+    """Complete stored profile (all fields), for pre-filling the edit form."""
+    doc = await db.users.find_one({"id": current.id}, {"_id": 0, "hashed_password": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found")
+    return doc
+
+
 @api_router.patch("/auth/me", response_model=UserPublic)
 async def update_me(payload: ProfileUpdate, current: UserPublic = Depends(get_current_user)):
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+
+    # Email doubles as the login identifier (scoped to (email, role)), so a
+    # change has to stay unique for this role and is normalised the same way
+    # registration/login normalise it (lower-cased) before any comparison.
+    if "email" in updates:
+        new_email = str(updates["email"]).strip().lower()
+        updates["email"] = new_email
+        if new_email != (current.email or "").lower():
+            clash = await db.users.find_one(
+                {"email": new_email, "role": current.role, "id": {"$ne": current.id}},
+                {"_id": 0, "id": 1},
+            )
+            if clash:
+                raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
+    # Validate service-category changes against the live catalog.
+    if "services" in updates:
+        svc = updates["services"] or []
+        rows = await db.poojas.find(
+            {"id": {"$in": svc}, "is_active": True}, {"_id": 0, "id": 1, "category": 1}).to_list(5000)
+        valid = {r["id"] for r in rows}
+        updates["services"] = [s for s in svc if s in valid]
+        if not updates["services"] or not {r.get("category") for r in rows if r.get("category")}:
+            raise HTTPException(status_code=400, detail="Select at least one service from a main category.")
+
+    for k, v in list(updates.items()):
+        if isinstance(v, str):
+            updates[k] = v.strip()
+
     if updates:
-        await db.users.update_one({"id": current.id}, {"$set": updates})
+        try:
+            await db.users.update_one({"id": current.id}, {"$set": updates})
+        except DuplicateKeyError:
+            raise HTTPException(status_code=409, detail="An account with this email already exists.")
+        # Keep the dedicated priest_registration record in sync.
+        await db.priest_registration.update_one({"user_id": current.id}, {"$set": updates})
+
     user = await db.users.find_one({"id": current.id}, {"_id": 0, "hashed_password": 0})
     return user_doc_to_public(user)
 
@@ -621,12 +790,302 @@ async def reset_password(payload: ResetPasswordRequest):
     return {"message": "Password updated successfully"}
 
 
+# ============ Priest registration status (3-step workflow) ============
+# stage: submitted -> interview -> approved | rejected
+REG_STAGES = ("submitted", "interview", "approved", "rejected")
+
+
+def _reg_stage(reg: dict) -> str:
+    if reg.get("stage") in REG_STAGES:
+        return reg["stage"]
+    st = reg.get("status")
+    return "approved" if st == "approved" else "rejected" if st == "rejected" else "submitted"
+
+
+@api_router.get("/priest/my-registration")
+async def my_registration(user: dict = Depends(get_current_user_any)):
+    """The signed-in priest's own registration progress — drives the
+    3-step pending screen. Works while the account is still inactive."""
+    if user.get("role") != "priest":
+        raise HTTPException(status_code=403, detail="Priests only")
+    reg = await db.priest_registration.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not reg:
+        approved = user.get("approval_status") == "approved"
+        return {"stage": "approved" if approved else "submitted",
+                "status": user.get("approval_status") or "pending",
+                "review_note": "", "reviewed_at": None}
+    return {
+        "stage": _reg_stage(reg),
+        "status": reg.get("status", "pending"),
+        "review_note": reg.get("review_note", ""),
+        "reviewed_at": reg.get("reviewed_at"),
+        "registered_at": reg.get("registered_at"),
+    }
+
+
+# ============ Metrics ============
+class MetricPing(BaseModel):
+    source: Optional[str] = "app"
+
+
+@api_router.post("/metrics/panchangam-view")
+async def track_panchangam_view(payload: MetricPing, request: Request):
+    """Counts taps on the Yagnika Panchangam (yagnika.in) link from inside
+    the apps. Public + lightly rate-limited; shown on the admin dashboard."""
+    await _check_rate_limit(request, "metrics", limit=240, window_seconds=60)
+    await db.metrics.update_one(
+        {"id": "panchangam_views"},
+        {"$inc": {"count": 1}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+# ============ Availability (Poojas & E-Poojas) ============
+# INVERTED model: a priest is AVAILABLE all week by default. They record the
+# days/times they are NOT available.
+#   users.availability = {
+#     offline_paused: bool,    -- pause ALL offline poojas until untoggled
+#     epuja_paused:   bool,    -- pause ALL e-poojas until untoggled
+#     same_availability: bool, -- one weekly schedule for both modes? (default off)
+#     weekly:          {mon:{off:bool, unavailable:[{start,end}]}, ... sun:{}},
+#     weekly_inperson: {...}, weekly_epuja: {...},   -- used when NOT "same"
+#     buffer_minutes:  int,
+#   }
+# A per-date override in `availability_overrides` states the priest's exact
+# availability for that date (positive) and beats the weekly schedule:
+#   {id, priest_id, date, available: bool, slots: [{start,end}]}
+# Resolution order for a date+mode: pause toggle -> override -> weekly.
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _empty_day() -> dict:
+    return {"off": False, "unavailable": []}
+
+
+def _empty_weekly() -> dict:
+    return {d: _empty_day() for d in DAYS}
+
+
+def _default_availability() -> dict:
+    return {
+        "offline_paused": False, "epuja_paused": False, "same_availability": False,
+        "weekly": _empty_weekly(), "weekly_inperson": _empty_weekly(),
+        "weekly_epuja": _empty_weekly(), "buffer_minutes": 0,
+    }
+
+
+def _passthru_slots(raw) -> list[dict]:
+    out = []
+    for s in raw or []:
+        if isinstance(s, dict) and s.get("start") and s.get("end"):
+            out.append({"start": str(s["start"]), "end": str(s["end"])})
+    return out
+
+
+def _norm_day(v) -> dict:
+    if isinstance(v, dict):
+        return {"off": bool(v.get("off")), "unavailable": _passthru_slots(v.get("unavailable"))}
+    return _empty_day()  # legacy list (positive "available" windows) -> reset
+
+
+def _norm_availability(a) -> dict:
+    base = _default_availability()
+    if not isinstance(a, dict):
+        return base
+    for k in ("offline_paused", "epuja_paused", "same_availability", "buffer_minutes"):
+        if k in a:
+            base[k] = a[k]
+    for key in ("weekly", "weekly_inperson", "weekly_epuja"):
+        base[key] = {d: _norm_day((a.get(key) or {}).get(d)) for d in DAYS}
+    return base
+
+
+class AvSlot(BaseModel):
+    start: str
+    end: str
+
+
+class AvModes(BaseModel):
+    offline_paused: Optional[bool] = None
+    epuja_paused: Optional[bool] = None
+    same_availability: Optional[bool] = None
+
+
+class AvWeeklyDay(BaseModel):
+    mode: Literal["both", "inperson", "epuja"] = "both"
+    off: bool = False                    # unavailable all day
+    unavailable: List[AvSlot] = []       # unavailable windows (when not "off")
+    buffer_minutes: Optional[int] = Field(default=None, ge=0, le=240)
+
+
+class AvOverride(BaseModel):
+    available: bool = True
+    slots: List[AvSlot] = []
+
+
+def _require_priest(current: UserPublic) -> None:
+    if current.role != "priest":
+        raise HTTPException(status_code=403, detail="Priests only")
+
+
+def _clean_slots(slots: List[AvSlot]) -> list[dict]:
+    """Validate a time-slot list: 'HH:MM AM/PM' (or 24h), end after start,
+    no overlap. Returned sorted."""
+    parsed: list[tuple[int, int, str, str]] = []
+    for s in slots:
+        st, en = (s.start or "").strip(), (s.end or "").strip()
+        try:
+            a, b = parse_time_to_minutes(st), parse_time_to_minutes(en)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Times must look like '06:00 AM'")
+        if b <= a:
+            raise HTTPException(status_code=400, detail="Each slot's end time must be after its start time")
+        parsed.append((a, b, st, en))
+    parsed.sort()
+    for i in range(1, len(parsed)):
+        if parsed[i][0] < parsed[i - 1][1]:
+            raise HTTPException(status_code=409, detail="Time slots must not overlap")
+    return [{"start": p[2], "end": p[3]} for p in parsed]
+
+
+@api_router.get("/priest/availability")
+async def get_availability(current: UserPublic = Depends(get_current_user)):
+    _require_priest(current)
+    p = await db.users.find_one({"id": current.id}, {"_id": 0})
+    ovr = await db.availability_overrides.find({"priest_id": current.id}, {"_id": 0}).to_list(500)
+    ovr.sort(key=lambda o: o["date"])
+    return {"availability": _norm_availability(p.get("availability")), "overrides": ovr}
+
+
+@api_router.patch("/priest/availability")
+async def set_availability_modes(payload: AvModes, current: UserPublic = Depends(get_current_user)):
+    """Set the pause toggles / same-availability flag. Never touches the
+    weekly schedule or overrides."""
+    _require_priest(current)
+    p = await db.users.find_one({"id": current.id}, {"_id": 0})
+    avail = _norm_availability(p.get("availability"))
+    for k in ("offline_paused", "epuja_paused", "same_availability"):
+        v = getattr(payload, k)
+        if v is not None:
+            avail[k] = v
+    await db.users.update_one({"id": current.id}, {"$set": {"availability": avail}})
+    return {"availability": avail}
+
+
+@api_router.put("/priest/availability/weekly/{day}")
+async def set_weekly_day(day: str, payload: AvWeeklyDay, current: UserPublic = Depends(get_current_user)):
+    """Set one weekday's UNAVAILABILITY. off=True -> unavailable all day."""
+    _require_priest(current)
+    day = day.lower()
+    if day not in DAYS:
+        raise HTTPException(status_code=400, detail="Unknown weekday")
+    daydoc = {"off": bool(payload.off),
+              "unavailable": [] if payload.off else _clean_slots(payload.unavailable)}
+    p = await db.users.find_one({"id": current.id}, {"_id": 0})
+    avail = _norm_availability(p.get("availability"))
+    if payload.mode == "both":
+        targets = ("weekly", "weekly_inperson", "weekly_epuja")
+    elif payload.mode == "inperson":
+        targets = ("weekly_inperson",)
+    else:
+        targets = ("weekly_epuja",)
+    for key in targets:
+        avail[key][day] = daydoc
+    if payload.buffer_minutes is not None:
+        avail["buffer_minutes"] = payload.buffer_minutes
+    await db.users.update_one({"id": current.id}, {"$set": {"availability": avail}})
+    return {"availability": avail}
+
+
+@api_router.put("/priest/availability/overrides/{date}")
+async def upsert_override(date: str, payload: AvOverride, current: UserPublic = Depends(get_current_user)):
+    _require_priest(current)
+    try:
+        d = datetime.strptime(date.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+    if d < datetime.now(timezone.utc).date():
+        raise HTTPException(status_code=400, detail="Cannot override a past date")
+    slots = _clean_slots(payload.slots) if payload.available else []
+    existing = await db.availability_overrides.find_one(
+        {"priest_id": current.id, "date": d.isoformat()}, {"_id": 0})
+    doc = {"priest_id": current.id, "date": d.isoformat(),
+           "available": payload.available, "slots": slots}
+    if existing:
+        doc["id"] = existing["id"]
+        await db.availability_overrides.update_one(
+            {"priest_id": current.id, "date": d.isoformat()}, {"$set": doc})
+    else:
+        doc["id"] = str(uuid.uuid4())
+        await db.availability_overrides.insert_one(dict(doc))
+    return doc
+
+
+@api_router.delete("/priest/availability/overrides/{date}")
+async def delete_override(date: str, current: UserPublic = Depends(get_current_user)):
+    _require_priest(current)
+    await db.availability_overrides.delete_one({"priest_id": current.id, "date": date.strip()})
+    return {"deleted": date.strip()}
+
+
+# ---- devotee side: resolved availability ----
+@api_router.get("/priests/{priest_id}/availability")
+async def priest_availability_public(priest_id: str, current: UserPublic = Depends(get_current_user)):
+    p = await db.users.find_one({"id": priest_id, "role": "priest", "is_active": True}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Priest not found")
+    ovr = await db.availability_overrides.find({"priest_id": priest_id}, {"_id": 0}).to_list(500)
+    ovr.sort(key=lambda o: o["date"])
+    return {"availability": _norm_availability(p.get("availability")), "overrides": ovr}
+
+
+@api_router.get("/priests/{priest_id}/availability/day")
+async def priest_availability_day(priest_id: str, date: str, mode: str = "epuja",
+                                  current: UserPublic = Depends(get_current_user)):
+    """Resolved availability for one date. Priority: pause toggle -> per-date
+    override -> weekly unavailability."""
+    p = await db.users.find_one({"id": priest_id, "role": "priest", "is_active": True}, {"_id": 0})
+    if not p:
+        raise HTTPException(status_code=404, detail="Priest not found")
+    try:
+        d = datetime.strptime(date.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+    avail = _norm_availability(p.get("availability"))
+    m = mode.lower()
+    is_offline = m in ("inperson", "offline")
+
+    if is_offline and avail["offline_paused"]:
+        return {"date": d.isoformat(), "available": False, "off": True,
+                "unavailable": [], "slots": [], "source": "paused"}
+    if not is_offline and avail["epuja_paused"]:
+        return {"date": d.isoformat(), "available": False, "off": True,
+                "unavailable": [], "slots": [], "source": "paused"}
+
+    o = await db.availability_overrides.find_one(
+        {"priest_id": priest_id, "date": d.isoformat()}, {"_id": 0})
+    if o is not None:
+        return {"date": d.isoformat(), "available": bool(o["available"]),
+                "off": (not o["available"]), "unavailable": [],
+                "slots": o["slots"], "source": "override"}
+
+    key = "weekly" if avail["same_availability"] else (
+        "weekly_inperson" if is_offline else "weekly_epuja")
+    day = avail[key][DAYS[d.weekday()]]
+    if day["off"]:
+        return {"date": d.isoformat(), "available": False, "off": True,
+                "unavailable": [], "slots": [], "source": "weekly"}
+    return {"date": d.isoformat(), "available": True, "off": False,
+            "unavailable": day["unavailable"], "slots": [], "source": "weekly"}
+
+
 # ============ Poojas ============
 @api_router.get("/poojas", response_model=List[Pooja])
 async def list_poojas(include_inactive: bool = False):
     q = {} if include_inactive else {"is_active": True}
     rows = await db.poojas.find(q, {"_id": 0}).to_list(5000)
-    return [Pooja(**r) for r in rows]
+    return [pooja_out(r) for r in rows]
 
 
 @api_router.post("/admin/poojas", response_model=Pooja)
@@ -635,7 +1094,7 @@ async def create_pooja(payload: PoojaCreate, _: UserPublic = Depends(require_adm
     doc = {"id": pid, **payload.dict(), "is_active": True}
     await db.poojas.insert_one(dict(doc))
     doc.pop("_id", None)
-    return Pooja(**doc)
+    return pooja_out(doc)
 
 
 @api_router.patch("/admin/poojas/{pooja_id}", response_model=Pooja)
@@ -647,7 +1106,7 @@ async def update_pooja(pooja_id: str, payload: PoojaUpdate, _: UserPublic = Depe
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Pooja not found")
     row = await db.poojas.find_one({"id": pooja_id}, {"_id": 0})
-    return Pooja(**row)
+    return pooja_out(row)
 
 
 # ============ Bookings (Devotee) ============
@@ -684,7 +1143,7 @@ async def create_booking(payload: BookingCreate, current: UserPublic = Depends(g
         "id": bid,
         "user_id": current.id,
         "user_name": current.name,
-        "user_mobile": current.mobile,
+        "user_mobile": (payload.contact_mobile or "").strip() or current.mobile,
         "pooja_id": pooja["id"],
         "pooja_name": pooja["name"],
         "booking_date": payload.booking_date,
@@ -692,6 +1151,8 @@ async def create_booking(payload: BookingCreate, current: UserPublic = Depends(g
         "sankalp_name": payload.sankalp_name,
         "gothram": payload.gothram,
         "place": payload.place,
+        "latitude": payload.latitude,
+        "longitude": payload.longitude,
         "notes": payload.notes or "",
         "status": "Pending Priest Assignment",
         "priest_id": None,
@@ -871,10 +1332,81 @@ async def admin_list_priests(_: UserPublic = Depends(require_admin), search: Opt
 
 
 @api_router.get("/admin/priest-registrations")
-async def admin_list_priest_registrations(_: UserPublic = Depends(require_admin)):
-    rows = await db.priest_registration.find({}, {"_id": 0}).to_list(2000)
+async def admin_list_priest_registrations(
+    _: UserPublic = Depends(require_admin),
+    status_filter: Optional[str] = Query(None, alias="status"),  # pending | approved | rejected
+    stage_filter: Optional[str] = Query(None, alias="stage"),    # submitted | interview | approved | rejected
+):
+    q: dict = {}
+    if status_filter:
+        q["status"] = status_filter
+    if stage_filter:
+        q["stage"] = stage_filter
+    rows = await db.priest_registration.find(q, {"_id": 0}).to_list(2000)
+    # Backfill a stage for legacy rows so the admin UI always has one.
+    for r in rows:
+        r["stage"] = _reg_stage(r)
     rows.sort(key=lambda x: x.get("registered_at", ""), reverse=True)
     return rows
+
+
+class RegReview(BaseModel):
+    note: Optional[str] = ""
+
+
+class RegStage(BaseModel):
+    stage: Literal["submitted", "interview"]
+    note: Optional[str] = ""
+
+
+@api_router.post("/admin/priest-registrations/{reg_id}/stage")
+async def admin_set_registration_stage(reg_id: str, payload: RegStage, _: UserPublic = Depends(require_admin)):
+    """Move a registration between the first two steps (details <-> interview).
+    Finalising is done via /approve or /reject."""
+    reg = await db.priest_registration.find_one({"id": reg_id}, {"_id": 0})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    if reg.get("status") in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="This registration has already been finalised.")
+    await db.priest_registration.update_one(
+        {"id": reg_id},
+        {"$set": {"stage": payload.stage, "status": "pending", "review_note": (payload.note or "").strip()}},
+    )
+    return {"stage": payload.stage, "user_id": reg["user_id"]}
+
+
+@api_router.post("/admin/priest-registrations/{reg_id}/approve")
+async def admin_approve_registration(reg_id: str, payload: RegReview, _: UserPublic = Depends(require_admin)):
+    reg = await db.priest_registration.find_one({"id": reg_id}, {"_id": 0})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.priest_registration.update_one(
+        {"id": reg_id},
+        {"$set": {"status": "approved", "stage": "approved", "reviewed_at": now, "review_note": (payload.note or "").strip()}},
+    )
+    await db.users.update_one(
+        {"id": reg["user_id"]},
+        {"$set": {"is_active": True, "approval_status": "approved"}},
+    )
+    return {"status": "approved", "user_id": reg["user_id"]}
+
+
+@api_router.post("/admin/priest-registrations/{reg_id}/reject")
+async def admin_reject_registration(reg_id: str, payload: RegReview, _: UserPublic = Depends(require_admin)):
+    reg = await db.priest_registration.find_one({"id": reg_id}, {"_id": 0})
+    if not reg:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.priest_registration.update_one(
+        {"id": reg_id},
+        {"$set": {"status": "rejected", "stage": "rejected", "reviewed_at": now, "review_note": (payload.note or "").strip()}},
+    )
+    await db.users.update_one(
+        {"id": reg["user_id"]},
+        {"$set": {"is_active": False, "approval_status": "rejected"}},
+    )
+    return {"status": "rejected", "user_id": reg["user_id"]}
 
 
 @api_router.get("/admin/devotees", response_model=List[UserPublic])
@@ -900,17 +1432,35 @@ async def admin_toggle_user(user_id: str, payload: ActiveToggle, _: UserPublic =
 
 @api_router.get("/admin/stats")
 async def admin_stats(_: UserPublic = Depends(require_admin)):
+    priests = await db.users.count_documents({"role": "priest"})
+    priests_active = await db.users.count_documents({"role": "priest", "is_active": True})
+    devotees = await db.users.count_documents({"role": "devotee"})
+    devotees_active = await db.users.count_documents({"role": "devotee", "is_active": True})
+    pv = await db.metrics.find_one({"id": "panchangam_views"}, {"_id": 0}) or {}
     return {
-        "priests": await db.users.count_documents({"role": "priest"}),
-        "priests_active": await db.users.count_documents({"role": "priest", "is_active": True}),
-        "devotees": await db.users.count_documents({"role": "devotee"}),
-        "devotees_active": await db.users.count_documents({"role": "devotee", "is_active": True}),
+        "priests": priests,
+        "priests_active": priests_active,
+        "priests_inactive": priests - priests_active,
+        "devotees": devotees,
+        "devotees_active": devotees_active,
+        "devotees_inactive": devotees - devotees_active,
+        "users_total": priests + devotees,
         "poojas": await db.poojas.count_documents({}),
         "poojas_active": await db.poojas.count_documents({"is_active": True}),
         "bookings_total": await db.bookings.count_documents({}),
         "bookings_pending": await db.bookings.count_documents({"status": "Pending Priest Assignment"}),
         "bookings_assigned": await db.bookings.count_documents({"status": "Priest Assigned"}),
         "bookings_completed": await db.bookings.count_documents({"status": "Completed"}),
+        "bookings_cancelled": await db.bookings.count_documents({"status": "Cancelled"}),
+        # A booking a priest has declined still shows up for others until
+        # someone accepts it — count anything with at least one rejection.
+        "bookings_rejected": await db.bookings.count_documents({"rejected_by.0": {"$exists": True}}),
+        "reg_pending": await db.priest_registration.count_documents({"status": "pending"}),
+        "reg_submitted": await db.priest_registration.count_documents({"stage": "submitted", "status": "pending"}),
+        "reg_interview": await db.priest_registration.count_documents({"stage": "interview", "status": "pending"}),
+        "reg_approved": await db.priest_registration.count_documents({"status": "approved"}),
+        "reg_rejected": await db.priest_registration.count_documents({"status": "rejected"}),
+        "panchangam_views": pv.get("count", 0),
     }
 
 
@@ -953,123 +1503,128 @@ POOJAS_SEED = [
 ]
 
 
-# ============ Priest service catalog (11 categories) ============
-# Selectable service categories a priest registers for. Seeded into the
-# `poojas` collection alongside the demo poojas above so the same
-# services/eligibility machinery applies. Stable ids: "svc-<cat>-<n>".
-SERVICE_CATALOG: dict[str, dict[str, list[str]]] = {
-    "Poojas": {
-        "Daily Poojas": [
-            "Suprabhata Seva", "Nitya Archana", "Sahasranama Archana", "Ashtottara Archana",
-            "Panchopachara Puja", "Shodashopachara Puja", "Deepa Aradhana", "Harathi",
-        ],
-        "Ganapati Poojas": ["Ganapati Puja", "Siddhi Vinayaka Puja", "Maha Ganapati Homam"],
-        "Lakshmi Poojas": ["Lakshmi Puja", "Vara Lakshmi Vratham", "Ashta Lakshmi Puja", "Dhana Lakshmi Puja"],
-        "Shiva Poojas": [
-            "Rudrabhishekam", "Maha Rudrabhishekam", "Ekadasa Rudram", "Laghu Rudram",
-            "Shiva Archana", "Pradosha Puja",
-        ],
-        "Vishnu Poojas": [
-            "Satyanarayana Swamy Vratham", "Sri Venkateswara Puja", "Sudarshana Puja",
-            "Vishnu Sahasranama Archana",
-        ],
-        "Devi Poojas": [
-            "Durga Puja", "Lalitha Sahasranama Puja", "Chandi Puja", "Raja Rajeshwari Puja",
-            "Navaratri Special Pujas",
-        ],
-        "Hanuman Poojas": ["Hanuman Puja", "Hanuman Chalisa Parayanam", "Sundarakanda Parayanam"],
-        "Subrahmanya Poojas": ["Subrahmanya Swamy Puja", "Sarpa Dosha Puja", "Skanda Shasti Puja"],
-        "Navagraha Poojas": [
-            "Navagraha Puja", "Graha Shanti", "Kuja Dosha Puja", "Shani Shanti", "Rahu-Ketu Puja",
-        ],
-        "Festival Poojas": [
-            "Ugadi", "Sri Rama Navami", "Krishna Janmashtami", "Vinayaka Chavithi", "Navaratri",
-            "Deepavali", "Kartika Masam", "Vaikunta Ekadasi", "Maha Shivaratri", "Sankranti",
-        ],
-    },
-    "Abhishekams": {
-        "": [
-            "Panchamrita Abhishekam", "Milk Abhishekam", "Honey Abhishekam", "Tender Coconut Abhishekam",
-            "Turmeric Abhishekam", "Kumkum Abhishekam", "Rudrabhishekam", "Sahasra Kalasa Abhishekam",
-            "Maha Abhishekam",
-        ],
-    },
-    "Alankarams": {
-        "Daily Alankarams": ["Pushpa Alankaram", "Tulasi Alankaram", "Bilva Alankaram", "Chandan Alankaram"],
-        "Festival Alankarams": [
-            "Raja Alankaram", "Kalyana Alankaram", "Vishesha Alankaram", "Swarna Alankaram",
-            "Ratna Alankaram", "Vastralankaram", "Phala Alankaram", "Anna Alankaram", "Navaratna Alankaram",
-        ],
-    },
-    "Homams / Havanas": {
-        "": [
-            "Ganapati Homam", "Sudarshana Homam", "Chandi Homam", "Ayushya Homam", "Dhanvantari Homam",
-            "Lakshmi Kubera Homam", "Navagraha Homam", "Rudra Homam", "Mrityunjaya Homam", "Saraswati Homam",
-            "Santana Gopala Homam", "Vastu Homam", "Durga Homam", "Lakshmi Homam", "Vishnu Homam",
-            "Chaturveda Homam",
-        ],
-    },
-    "Vratams": {
-        "": [
-            "Satyanarayana Vratham", "Vara Lakshmi Vratham", "Kedareswara Vratham", "Savitri Vratham",
-            "Karadaiyan Nombu", "Ekadasi Puja", "Ganapathi Vratham", "Anantha Padmanabha Swamy Vratham",
-            "Durga Vratham", "Vibhava Lakshmi Vratham", "Kartika Vratham",
-        ],
-    },
-    "Samskaras (Life-Cycle Rituals)": {
-        "": [
-            "Garbhadhana", "Pumsavana", "Seemantham (Simantonnayana)", "Namakarana", "Annaprasana",
-            "Aksharabhyasam (Vidyarambham)", "Chudakarana (Mundan)", "Karnavedha", "Upanayanam",
-            "Vedarambham", "Samavartanam", "Vivaham (Marriage)", "Shashtipoorthi", "Bheemaratha Shanti",
-            "Sathabhishekam",
-        ],
-    },
-    "Antyeshti & Pitru Karmas": {
-        "": [
-            "Antyeshti", "Asthi Visarjanam", "Pinda Pradanam", "Masikam", "Varshikam", "Shraddham",
-            "Tarpanam", "Pitru Shanti", "Narayana Bali", "Tripindi Shraddha",
-        ],
-    },
-    "Temple Sevas": {
-        "": [
-            "Nitya Kainkaryam", "Archana", "Abhishekam", "Kalyanotsavam", "Utsava Seva", "Dolotsavam",
-            "Pallaki Seva", "Garuda Seva", "Rathotsavam", "Teppotsavam", "Sahasra Deepalankarana",
-        ],
-    },
-    "Vanta Brahmin (Religious Cooking Services)": {
-        "": [
-            "Temple Prasadam Preparation", "Naivedyam Preparation", "Wedding Feast Cooking",
-            "Upanayanam Catering", "Sraddha Bhojanam", "Festival Food Preparation",
-            "Vratham Food Preparation", "Satvik Cooking", "Large-scale Annadanam Cooking",
-        ],
-    },
-    "Paricharaka (Temple Support Services)": {
-        "": [
-            "Temple Cleaning", "Sanctum Preparation", "Flower Decoration", "Garland Preparation",
-            "Deepa Seva", "Naivedya Arrangement", "Bell Service", "Utsava Assistance", "Procession Support",
-            "Temple Maintenance", "Prasadam Distribution", "Queue Management", "Temple Inventory Support",
-        ],
-    },
-    "Parayanams": {
-        "": [
-            "Vishnu Sahasranamam", "Lalitha Sahasranamam", "Shiva Sahasranamam", "Aditya Hridayam",
-            "Sundarakanda", "Bhagavad Gita", "Ramayana", "Devi Mahatmyam (Durga Saptashati)", "Rudram",
-            "Chamakam", "Purusha Suktam", "Sri Suktam", "Narayana Suktam", "Medha Suktam",
-        ],
-    },
+# ============ Priest & spiritual service catalog ============
+# Selectable categories a service provider registers for. Each category
+# holds an ordered list of blocks; a block is either a named subcategory
+# with its own services, or {"sub": None} for services that sit directly
+# under the category. Seeded into the `poojas` collection (ids "sc-<c>-<n>")
+# so the same eligibility machinery applies.
+SERVICE_CATALOG: dict[str, list[dict]] = {
+    "Daiva Karyakramas (Divine Services)": [
+        {"sub": "Poojas", "items": [
+            "Suprabhata Seva", "Archana", "Ashtottara Archana", "Sahasranama Archana", "Mangala Harathi",
+        ]},
+        {"sub": "Special Poojas", "items": [
+            "Pradosha Puja", "Graha Shanti Puja", "Rahu-Ketu Puja", "Sarpa Dosha Puja", "Ayushya Puja",
+            "Vastu Puja", "Navagraha Puja", "Saraswati Puja", "Hanuman Puja", "Sri Venkateswara Swamy Puja",
+        ]},
+        {"sub": "Vrathams", "items": [
+            "Satyanarayana Vratham", "Vara Lakshmi Vratham", "Ganapati Vratham", "Kedareswara Vratham",
+            "Anantha Padmanabha Vratham", "Durga Vratham", "Vibhava Lakshmi Vratham", "Ekadashi Vratham",
+            "Kartika Vratham", "Dattatreya Vratham", "Skanda Shashti Vratham", "Tulasi Vratham",
+            "Santoshi Mata Vratham",
+        ]},
+        {"sub": "Abhishekams", "items": [
+            "Ekadasha Rudrabhishekam", "Rudraabhishekam", "Moorthi Abhishekam", "Sahasra Kalasa Abhishekam",
+        ]},
+        {"sub": "Homams / Yagnas", "items": [
+            "Ganapati Homam", "Sudarshana Homam", "Chandi Homam", "Navagraha Homam", "Rudra Homam",
+            "Maha Mrityunjaya Homam", "Lakshmi Kubera Homam", "Lakshmi Ganapathi Homam", "Santana Gopala Homam",
+            "Saraswati Homam", "Ayushya Homam", "Dhanvantari Homam", "Vastu Homam", "Pratyangira Homam",
+        ]},
+        {"sub": "Pratishtha Karyas", "items": [
+            "Vigraha Pratishtha", "Yantra Pratishtha", "Kumbhabhishekam", "Dhwaja Stambha Pratishtha",
+            "Kalasha Sthapana", "Jeernoddharana", "Temple Renovation Rituals",
+        ]},
+        {"sub": "Deity Kalyanams", "items": [
+            "Sita Rama Kalyanam", "Srinivasa Kalyanam", "Uma Maheshwara Kalyanam", "Lakshmi Narayana Kalyanam",
+            "Subrahmanya Kalyanam", "Suvarchala Hanuman Kalyanam",
+        ]},
+        {"sub": "Utsavams", "items": ["Brahmotsavam"]},
+        {"sub": "Navaratrulu", "items": ["Devi Navaratri", "Ganapathi Navaratri"]},
+    ],
+    "Manushya Karyakramas (Subha Karyas)": [
+        {"sub": "Shodasha Samskaras", "items": [
+            "Garbhadhana", "Pumsavana", "Seemantham", "Jatakarma", "Namakarana", "Annaprasana",
+            "Chudakarana", "Karnavedha", "Aksharabhyasam", "Upanayanam", "Vedarambham", "Samavartanam",
+            "Vivaham",
+        ]},
+        {"sub": "Family Ceremonies", "items": [
+            "Gruha Pravesham", "Bhoomi Puja", "Shanku Sthapana", "Vastu Puja", "Vehicle Puja",
+            "Office / Shop / Factory Opening", "Ayushya Ceremony", "Shashtipoorthi", "Sathabhishekam",
+            "Kanakabhishekam",
+        ]},
+    ],
+    "Alankara Sevas (Deity Decoration Services)": [
+        {"sub": None, "items": [
+            "Moolamoorthi Alankaram", "Utsavamoorthi Alankaram",
+            "Moorthi Samagra Vyavastha (end-to-end deity arrangement)",
+        ]},
+    ],
+    "Paricharaka Sevas (Priest Assistance Services)": [
+        {"sub": None, "items": ["Temple Assistance", "Priest Assistance"]},
+    ],
+    "Vanta Brahmana Sevas (Religious Cooking Services)": [
+        {"sub": None, "items": ["Temple", "Shubha Karya", "Ashubha Karya"]},
+    ],
+    "Parayana Sevas (Sacred Recitations)": [
+        {"sub": "Vedic Chanting", "items": [
+            "Rudram", "Chamakam", "Purusha Suktam", "Sri Suktam", "Narayana Suktam", "Durga Suktam",
+            "Medha Suktam",
+        ]},
+        {"sub": "Sahasranamas", "items": [
+            "Vishnu Sahasranamam", "Lalitha Sahasranamam", "Shiva Sahasranamam", "Lakshmi Sahasranamam",
+            "Subrahmanya Sahasranamam",
+        ]},
+        {"sub": "Stotras", "items": [
+            "Hanuman Chalisa", "Aditya Hridayam", "Kanakadhara Stotram", "Soundarya Lahari", "Lingashtakam",
+            "Mahishasura Mardini Stotram", "Manidweepam Varnana",
+        ]},
+        {"sub": "Scriptural Recitations", "items": [
+            "Sundarakanda", "Ramayanam", "Bhagavad Gita", "Srimad Bhagavatam", "Devi Mahatmyam",
+            "Vishnu Puranam", "Shiva Puranam", "Skanda Puranam", "Bhagavata Saptaham", "Garuda Purana",
+        ]},
+    ],
+    "Jyotisha Sevas (Astrology Services)": [
+        {"sub": None, "items": [
+            "Horoscope Services", "Muhurtha Services", "Dosha Analysis", "Parihara Recommendations",
+            "Numerology", "Palmistry", "Vastu Consultation",
+        ]},
+    ],
+    "Danas (Accepted Ritual Offerings)": [
+        {"sub": "Common Danas", "items": ["Dakshina", "Vastra Dana", "Anna Dana"]},
+        {"sub": "Special Danas", "items": [
+            "Graha Shanti Danas", "Shani Dana", "Rahu-Ketu Dana", "Pitru Dosha Dana", "Naga Dosha Dana",
+            "Kuja Dosha Dana", "Parihara Danas",
+        ]},
+    ],
+    # Split out of "Manushya Karyakramas (Subha Karyas)" into its own main
+    # category. Appended last on purpose so the sc-<catIdx>-<n> ids of every
+    # other category stay unchanged; display order is set on the frontend.
+    "Manushya Karyakramas (Pitru Karma / Uttara Kriya)": [
+        {"sub": None, "items": [
+            "Antyeshti", "Asthi Visarjanam", "Pinda Pradanam", "Shraddham", "Tarpanam", "Masikam",
+            "Varshikam", "Ekoddishta Shraddha", "Sapindikarana", "Narayana Bali", "Tripindi Shraddha",
+            "Pitru Shanti",
+        ]},
+    ],
 }
+
+# Fixed display order for the categories above.
+CATEGORY_ORDER = list(SERVICE_CATALOG.keys())
 
 
 def build_service_seed() -> list[dict]:
     """Flattens SERVICE_CATALOG into poojas-collection docs with stable ids."""
     docs: list[dict] = []
-    for cat_idx, (category, groups) in enumerate(SERVICE_CATALOG.items(), start=1):
+    for cat_idx, (category, blocks) in enumerate(SERVICE_CATALOG.items(), start=1):
         n = 0
-        for subcategory, items in groups.items():
-            for name in items:
+        for block in blocks:
+            sub = block["sub"] or None
+            for name in block["items"]:
                 n += 1
                 docs.append({
-                    "id": f"svc-{cat_idx}-{n}",
+                    "id": f"sc-{cat_idx}-{n}",
                     "name": name,
                     "sanskrit_name": "",
                     "description": "",
@@ -1077,7 +1632,7 @@ def build_service_seed() -> list[dict]:
                     "price": 0,
                     "is_active": True,
                     "category": category,
-                    "subcategory": subcategory or None,
+                    "subcategory": sub,
                 })
     return docs
 
@@ -1120,6 +1675,32 @@ async def seed_database():
     await db.priest_registration.create_index("user_id")
     await db.priest_registration.create_index("registered_at")
 
+    # Availability: per-date overrides + drop the retired E-Service data.
+    try:
+        await db.create_collection("availability_overrides")
+    except CollectionInvalid:
+        pass
+    await db.availability_overrides.create_index([("priest_id", 1), ("date", 1)], unique=True)
+    try:
+        await db.eservice_slots.drop()
+    except Exception:
+        pass
+    await db.users.update_many(
+        {"role": "priest"},
+        {"$unset": {"eservice_available": "", "eservice_start": "", "eservice_end": "",
+                    "eservice_defaults": "", "eservice_customized_dates": "", "eservice_enabled": ""}},
+    )
+    # Availability model was inverted (available-by-default). Reset any config
+    # still on the old "positive weekly + inperson/epuja_enabled" shape.
+    await db.users.update_many(
+        {"role": "priest", "$or": [
+            {"availability.inperson_enabled": {"$exists": True}},
+            {"availability.epuja_enabled": {"$exists": True}},
+            {"availability.weekly.mon": {"$type": "array"}},
+        ]},
+        {"$unset": {"availability": ""}},
+    )
+
     # Backfill busy=True for any priest with a pre-existing "Priest
     # Assigned" booking from before the busy flag existed, so they're
     # correctly excluded from new eligibility until they complete it.
@@ -1129,34 +1710,75 @@ async def seed_database():
 
     # Reset poojas seed (idempotent) + backfill is_active on any legacy docs
     await db.poojas.update_many({"is_active": {"$exists": False}}, {"$set": {"is_active": True}})
+
+    # Demo poojas (p1..p10) used by the devotee booking flow.
     existing_ids = {p["id"] for p in await db.poojas.find({}, {"id": 1, "_id": 0}).to_list(5000)}
-    # Demo poojas (p1..p10) + the full 11-category priest service catalog.
-    to_insert = [p for p in (POOJAS_SEED + SERVICE_SEED) if p["id"] not in existing_ids]
+    to_insert = [p for p in POOJAS_SEED if p["id"] not in existing_ids]
     if to_insert:
         await db.poojas.insert_many([dict(p) for p in to_insert])
-    # Keep category/subcategory current on already-seeded catalog rows
-    # (so a catalog tweak on restart is reflected without a manual wipe).
-    for p in SERVICE_SEED:
-        if p["id"] in existing_ids:
-            await db.poojas.update_one(
-                {"id": p["id"]},
-                {"$set": {"name": p["name"], "category": p["category"],
-                          "subcategory": p["subcategory"], "is_active": True}},
-            )
 
-    # Admin account
-    admin_email = "admin@yagnika.com"
-    if not await db.users.find_one({"email": admin_email}):
+    # --- Service category catalog: rebuild from SERVICE_CATALOG ---
+    # Drop the previous catalog entirely (old "svc-*" scheme and any
+    # "sc-*" rows no longer present) so a catalog change is fully applied.
+    await db.poojas.delete_many({"id": {"$regex": "^svc-"}})
+    current_sc_ids = [d["id"] for d in SERVICE_SEED]
+    await db.poojas.delete_many({"id": {"$regex": "^sc-", "$nin": current_sc_ids}})
+    for d in SERVICE_SEED:
+        await db.poojas.update_one({"id": d["id"]}, {"$set": dict(d)}, upsert=True)
+
+    # Grandfather priests that registered before the approval workflow:
+    # mark their registration + account as approved so they keep working.
+    await db.priest_registration.update_many(
+        {"status": {"$nin": ["pending", "approved", "rejected"]}},
+        {"$set": {"status": "approved", "reviewed_at": None, "review_note": "auto-approved (legacy)"}},
+    )
+    # Backfill the 3-step `stage` on any registration row that predates it.
+    await db.priest_registration.update_many(
+        {"stage": {"$exists": False}, "status": "approved"}, {"$set": {"stage": "approved"}})
+    await db.priest_registration.update_many(
+        {"stage": {"$exists": False}, "status": "rejected"}, {"$set": {"stage": "rejected"}})
+    await db.priest_registration.update_many(
+        {"stage": {"$exists": False}}, {"$set": {"stage": "submitted"}})
+    approved_ids = await db.priest_registration.distinct("user_id", {"status": "approved"})
+    if approved_ids:
+        await db.users.update_many(
+            {"id": {"$in": approved_ids}, "approval_status": {"$exists": False}},
+            {"$set": {"approval_status": "approved"}},
+        )
+    # Any priest user with no approval_status at all (e.g. no registration
+    # record) is treated as approved to avoid locking existing testers out.
+    await db.users.update_many(
+        {"role": "priest", "approval_status": {"$exists": False}},
+        {"$set": {"approval_status": "approved"}},
+    )
+
+    # Admin account. Sign-in is by username (not email) via POST
+    # /api/admin/login. Credentials come from ADMIN_USERNAME / ADMIN_PASSWORD
+    # in .env and are kept in sync on every startup.
+    admin_username = os.environ.get('ADMIN_USERNAME', '').strip()
+    admin_password = os.environ.get('ADMIN_PASSWORD', '')
+    if not admin_username or not admin_password:
+        logger.warning("ADMIN_USERNAME / ADMIN_PASSWORD not set; skipping admin account seeding")
+        return
+    admin_hash = hash_password(admin_password)
+    existing_admin = await db.users.find_one({"role": "admin"})
+    if not existing_admin:
         await db.users.insert_one({
             "id": "admin",
             "name": "Yagnika Admin",
-            "email": admin_email,
+            "username": admin_username,
+            "email": "admin@yagnika.com",  # kept for the (email, role) unique index
             "mobile": "+91 00000 00000",
             "role": "admin",
             "is_active": True,
-            "hashed_password": hash_password("Admin@123"),
+            "hashed_password": admin_hash,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+    else:
+        await db.users.update_one(
+            {"id": existing_admin["id"]},
+            {"$set": {"username": admin_username, "hashed_password": admin_hash, "is_active": True}},
+        )
 
 
 @app.on_event("startup")
@@ -1166,6 +1788,13 @@ async def on_startup():
 
 app.include_router(api_router)
 
+# Panchangam / Muhurtam / Kundali calculators (public, read-only) — ported
+# from the standalone Yagnika Panchangam service, now served in-app so the
+# customer and priest apps have a fully native Panchangam feature.
+from panchangam.router import router as panchangam_router  # noqa: E402
+
+app.include_router(panchangam_router, prefix="/api")
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -1173,6 +1802,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---- Admin Web UI (single self-contained page, served by this backend) ----
+_ADMIN_UI = ROOT_DIR / "admin_ui" / "index.html"
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/", include_in_schema=False)
+async def admin_ui():
+    if not _ADMIN_UI.exists():
+        raise HTTPException(status_code=404, detail="Admin UI not found")
+    return FileResponse(str(_ADMIN_UI), media_type="text/html")
 
 
 @app.on_event("shutdown")
