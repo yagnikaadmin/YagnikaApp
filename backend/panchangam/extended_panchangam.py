@@ -17,13 +17,11 @@ Major pan-India + Telugu-regional festivals ARE covered — matched against a
 fixed Amanta masa reference regardless of the request's calendar_type, so a
 festival's presence doesn't depend on which calendar tab is selected.
 Each festival's governing tithi is resolved to its exact [start, end) UTC
-span in core/panchangam.py (_compute_tithi_festival_spans), and the
-festival is shown on *every* civil day that span touches — usually one day,
-but a tithi that starts mid-day and runs past local midnight touches two.
-Rather than pick a single "correct" day via a kaal-specific rule (Madhyahna/
-Nishita/Aparahna/Pradosh — which sources and traditions genuinely disagree
-on for edge cases), the actual tithi start/end time is shown alongside the
-name so the exact astronomical timing is transparent either way.
+span in core/panchangam.py (_compute_tithi_festival_spans) and then to the
+single day it is traditionally observed on, by the kaal at which that tithi
+must be in effect (sunrise, Madhyahna, Aparahna, Pradosh, Nishita,
+Arunodaya, or the Smarta Ekadashi rule) — matching Drik Panchang's 2026
+Hyderabad dates. The exact tithi start/end is still shown alongside.
 
 Language keys follow core/panchangam.py's convention: en, te, hi, ta, kn, ml.
 Same best-effort/native-review caveat as that file's name tables applies to
@@ -173,10 +171,10 @@ def compute_choghadiya(sunrise: datetime, sunset: datetime, next_sunrise: dateti
     # 5th weekday inclusive is (weekday + 4) % 7.
     night_start = CHOGHADIYA_CYCLE.index(WEEKDAY_LORD[(weekday + 4) % 7])
 
-    def _periods(base: datetime, seg: timedelta, start: int) -> list[dict[str, Any]]:
+    def _periods(base: datetime, seg: timedelta, start: int, stride: int) -> list[dict[str, Any]]:
         out = []
         for i in range(8):
-            planet = CHOGHADIYA_CYCLE[(start + i) % 7]
+            planet = CHOGHADIYA_CYCLE[(start + i * stride) % 7]
             s, e = base + seg * i, base + seg * (i + 1)
             out.append({
                 "planet": planet,
@@ -188,8 +186,10 @@ def compute_choghadiya(sunrise: datetime, sunset: datetime, next_sunrise: dateti
         return out
 
     return {
-        "day": _periods(sunrise, day_seg, day_start),
-        "night": _periods(sunset, night_seg, night_start),
+        # Day periods step through the cycle one at a time; night periods
+        # step 5 places at a time (verified against Drik Panchang, Sat & Mon).
+        "day": _periods(sunrise, day_seg, day_start, 1),
+        "night": _periods(sunset, night_seg, night_start, 5),
     }
 
 
@@ -225,7 +225,8 @@ GOWRI_NAME = {
 GOWRI_GOOD = {"amirdha", "dhanam", "laabam", "sugam", "uthi"}
 
 # Fixed per-weekday tables (Pambu Panchangam convention) — cross-checked
-# against drikpanchang.com for all 7 weekdays; this is NOT a simple rotation
+# against drikpanchang.com for all 7 weekdays, day and night (Oct 2026; note
+# Saturday night ends with a second Soram); this is NOT a simple rotation
 # (verified empirically that a single fixed cyclic offset does not hold
 # across all weekdays), so each weekday's 8-item sequence is listed as-is.
 GOWRI_DAY_SEQUENCE = {
@@ -244,7 +245,7 @@ GOWRI_NIGHT_SEQUENCE = {
     2: ["uthi", "amirdha", "rogam", "laabam", "dhanam", "sugam", "soram", "visham"],
     3: ["amirdha", "visham", "rogam", "laabam", "dhanam", "sugam", "soram", "uthi"],
     4: ["rogam", "laabam", "dhanam", "sugam", "soram", "uthi", "visham", "amirdha"],
-    5: ["laabam", "dhanam", "sugam", "soram", "uthi", "visham", "amirdha", "rogam"],
+    5: ["laabam", "dhanam", "sugam", "soram", "uthi", "visham", "amirdha", "soram"],
 }
 
 
@@ -410,12 +411,12 @@ FESTIVAL_NAMES = {
 
 
 def _find_varalakshmi_vratam(tithi_festivals: dict[str, dict[str, Any]]) -> date:
-    """Varalakshmi Vratam is the Friday nearest before Shravana Purnima —
-    a weekday-relative rule, unlike every other festival here which is a
-    fixed tithi/masa. Derived from raksha_bandhan's own Purnima span
-    (same tithi) rather than a separate lookup."""
+    """Varalakshmi Vratam is the Friday on or just before Shravana Purnima
+    (the Purnima day itself when it is a Friday — Drik Panchang: 28 Aug
+    2026) — a weekday-relative rule, unlike every other festival here which
+    is a fixed tithi/masa. Derived from raksha_bandhan's Purnima day."""
     purnima_date = tithi_festivals["raksha_bandhan"]["dates"][0]
-    d = purnima_date - timedelta(days=1)
+    d = purnima_date
     while d.weekday() != 4:  # Friday
         d -= timedelta(days=1)
     return d

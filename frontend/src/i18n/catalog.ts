@@ -22,6 +22,11 @@ export const CATEGORY_ORDER = [
   'Danas (Accepted Ritual Offerings)',
 ];
 
+// Danas can't be offered on their own — a priest must also perform at least
+// one service from another category. Enforced in ServiceCategoryPicker, the
+// registration form and the backend (server.py DANA_CATEGORY).
+export const DANA_CATEGORY = 'Danas (Accepted Ritual Offerings)';
+
 export const CATEGORY_SLUG: Record<string, string> = {
   'Daiva Karyakramas (Divine Services)': 'daiva',
   'Manushya Karyakramas (Subha Karyas)': 'manushya',

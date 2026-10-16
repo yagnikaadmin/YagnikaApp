@@ -243,17 +243,19 @@ function showDetail(id) {
   document.getElementById('d-kv').innerHTML = fields
     .filter(([,v]) => v !== undefined && v !== null && v !== '')
     .map(([k,v]) => `<div>${esc(k)}</div><div>${esc(v)}</div>`).join('')
-    + (r.aadhaar_proof ? `<div>Aadhaar proof</div><div><a class="proof" onclick="viewProof('${r.id}')">Open</a></div>` : '');
+    + (r.aadhaar_proof ? `<div>Aadhaar proof</div><div><a class="proof" onclick="viewProof('${r.id}')">Open</a></div>` : '')
+    + (r.agama_certificate ? `<div>Agama certificate</div><div><a class="proof" onclick="viewProof('${r.id}', 'agama_certificate')">Open</a></div>` : '');
   document.getElementById('detail').showModal();
 }
-function viewProof(id) {
-  const r = REGS[id]; if (!r || !r.aadhaar_proof) return;
+// Opens an uploaded document (Aadhaar proof by default, or the Agama certificate).
+function viewProof(id, field = 'aadhaar_proof') {
+  const r = REGS[id]; const doc = r && r[field]; if (!doc) return;
   const w = window.open('', '_blank');
-  const isPdf = r.aadhaar_proof.startsWith('data:application/pdf');
+  const isPdf = doc.startsWith('data:application/pdf');
   w.document.write(isPdf
-    ? `<iframe src="${r.aadhaar_proof}" style="border:0;width:100%;height:100vh"></iframe>`
-    : `<img src="${r.aadhaar_proof}" style="max-width:100%">`);
-  w.document.title = (r.name || 'Aadhaar') + ' — proof';
+    ? `<iframe src="${doc}" style="border:0;width:100%;height:100vh"></iframe>`
+    : `<img src="${doc}" style="max-width:100%">`);
+  w.document.title = (r.name || 'Priest') + (field === 'agama_certificate' ? ' — Agama certificate' : ' — Aadhaar proof');
 }
 
 function renderPriests(priests, regs) {

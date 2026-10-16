@@ -115,6 +115,8 @@ MAX_PHOTO_DATA_URI_LEN = 1_500_000
 # Aadhaar proof: 2 MB binary ~= 2.67 MB of base64; allow headroom for the
 # data-URI prefix and whitespace.
 MAX_AADHAAR_PROOF_LEN = 2_900_000
+# Uploaded documents (Aadhaar proof, Agama certificate): JPEG / PNG / PDF data URIs.
+PROOF_PREFIXES = ("data:image/jpeg", "data:image/jpg", "data:image/png", "data:application/pdf")
 
 
 class PriestRegister(BaseModel):
@@ -138,10 +140,12 @@ class PriestRegister(BaseModel):
     # --- B. Religious Lineage & Vedic Details (mandatory; abhivadanam optional) ---
     sampradaya: str
     agama: str
-    veda: str
-    sutra: str
-    gotra: str
-    pravara: str
+    # Vedic details are no longer collected at registration (kept optional for
+    # older clients and existing records).
+    veda: Optional[str] = ""
+    sutra: Optional[str] = ""
+    gotra: Optional[str] = ""
+    pravara: Optional[str] = ""
     abhivadanam: Optional[str] = ""
 
     # --- C. Professional Details (mandatory) ---
@@ -161,6 +165,8 @@ class PriestRegister(BaseModel):
     optional_email: Optional[str] = ""
     certifications: Optional[str] = ""
     agama_certification: Optional[str] = ""
+    agama_certificate: Optional[str] = Field(default=None, max_length=MAX_AADHAAR_PROOF_LEN)  # data URI (JPEG/PNG/PDF)
+    agama_certificate_name: Optional[str] = ""
     veda_patashala: Optional[str] = ""
     guru_name: Optional[str] = ""
     awards: Optional[str] = ""
@@ -211,6 +217,18 @@ class ProfileUpdate(BaseModel):
     veda_patashala: Optional[str] = None
     guru_name: Optional[str] = None
     awards: Optional[str] = None
+    # Priest registration fields — the priest Edit Profile screen is the
+    # registration form in edit mode, so every registration field is editable
+    # with the same validation (see update_me).
+    aadhaar_number: Optional[str] = None
+    aadhaar_proof: Optional[str] = Field(default=None, max_length=MAX_AADHAAR_PROOF_LEN)
+    aadhaar_proof_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    sampradaya: Optional[str] = None
+    agama: Optional[str] = None
+    agama_certificate: Optional[str] = Field(default=None, max_length=MAX_AADHAAR_PROOF_LEN)  # "" removes it
+    agama_certificate_name: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=6)  # new password; omit to keep
 
 
 class UserLogin(BaseModel):
@@ -513,6 +531,26 @@ async def register_devotee(payload: DevoteeRegister, request: Request):
 
 AADHAAR_RE = re.compile(r"\D")
 
+# Indian mobile: 10 digits starting 6-9, optionally prefixed with +91 / 91 / 0.
+# Spaces and dashes are ignored. Mirrors frontend src/utils/validation.ts.
+MOBILE_RE = re.compile(r"^(?:\+91|91|0)?[6-9]\d{9}$")
+# name@domain.tld — a period and a 2+ letter top-level domain are required.
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$")
+INVALID_MOBILE_DETAIL = "Enter a valid 10-digit Indian mobile number (starting with 6, 7, 8 or 9)."
+
+
+def is_valid_mobile(value: str) -> bool:
+    return bool(MOBILE_RE.match(re.sub(r"[\s-]", "", value or "")))
+
+
+def is_valid_email(value: str) -> bool:
+    return bool(EMAIL_RE.match((value or "").strip()))
+
+# Danas can't be offered on their own: a priest must also select at least one
+# service from another category (mirrors frontend src/i18n/catalog.ts).
+DANA_CATEGORY = "Danas (Accepted Ritual Offerings)"
+DANA_ONLY_DETAIL = "Danas can only be selected together with at least one service from another category."
+
 
 @api_router.post("/auth/register-priest", response_model=Token)
 async def register_priest(payload: PriestRegister, request: Request):
@@ -521,8 +559,7 @@ async def register_priest(payload: PriestRegister, request: Request):
     # --- Mandatory field checks (beyond the type-level ones in the model) ---
     mandatory_text = {
         "name": payload.name, "address": payload.address,
-        "sampradaya": payload.sampradaya, "agama": payload.agama, "veda": payload.veda,
-        "sutra": payload.sutra, "gotra": payload.gotra, "pravara": payload.pravara,
+        "sampradaya": payload.sampradaya, "agama": payload.agama,
     }
     missing = [k for k, v in mandatory_text.items() if not (v or "").strip()]
     if missing:
@@ -532,11 +569,26 @@ async def register_priest(payload: PriestRegister, request: Request):
     if len(aadhaar) != 12:
         raise HTTPException(status_code=400, detail="Aadhaar Number must be 12 digits")
 
+    if not is_valid_mobile(payload.mobile):
+        raise HTTPException(status_code=400, detail=INVALID_MOBILE_DETAIL)
+    if (payload.alt_mobile or "").strip() and not is_valid_mobile(payload.alt_mobile):
+        raise HTTPException(status_code=400, detail="Alternative mobile: " + INVALID_MOBILE_DETAIL)
+    if not is_valid_email(payload.email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address, e.g. name@gmail.com.")
+    if (payload.optional_email or "").strip() and not is_valid_email(payload.optional_email):
+        raise HTTPException(status_code=400, detail="Alternate email: enter a valid email address, e.g. name@gmail.com.")
+
     proof = (payload.aadhaar_proof or "").strip()
-    if not proof.startswith(("data:image/jpeg", "data:image/jpg", "data:image/png", "data:application/pdf")):
+    if not proof.startswith(PROOF_PREFIXES):
         raise HTTPException(status_code=400, detail="Aadhaar ID Proof must be a JPEG, PNG or PDF file.")
     if len(proof) > MAX_AADHAAR_PROOF_LEN:
         raise HTTPException(status_code=400, detail="Aadhaar ID Proof exceeds the 2 MB limit.")
+
+    agama_cert = (payload.agama_certificate or "").strip()
+    if agama_cert and not agama_cert.startswith(PROOF_PREFIXES):
+        raise HTTPException(status_code=400, detail="Agama certificate must be a JPEG, PNG or PDF file.")
+    if len(agama_cert) > MAX_AADHAAR_PROOF_LEN:
+        raise HTTPException(status_code=400, detail="Agama certificate exceeds the 2 MB limit.")
 
     try:
         dob = datetime.strptime(payload.date_of_birth.strip(), "%Y-%m-%d").date()
@@ -557,6 +609,8 @@ async def register_priest(payload: PriestRegister, request: Request):
     categories = {r.get("category") for r in rows if r.get("category")}
     if not services or not categories:
         raise HTTPException(status_code=400, detail="Select at least one service from a main category.")
+    if not categories - {DANA_CATEGORY}:
+        raise HTTPException(status_code=400, detail=DANA_ONLY_DETAIL)
 
     uid = str(uuid.uuid4())
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -571,10 +625,10 @@ async def register_priest(payload: PriestRegister, request: Request):
         "date_of_birth": payload.date_of_birth.strip(),
         "sampradaya": payload.sampradaya.strip(),
         "agama": payload.agama.strip(),
-        "veda": payload.veda.strip(),
-        "sutra": payload.sutra.strip(),
-        "gotra": payload.gotra.strip(),
-        "pravara": payload.pravara.strip(),
+        "veda": (payload.veda or "").strip(),
+        "sutra": (payload.sutra or "").strip(),
+        "gotra": (payload.gotra or "").strip(),
+        "pravara": (payload.pravara or "").strip(),
         "abhivadanam": (payload.abhivadanam or "").strip(),
         "years_of_experience": payload.years_of_experience,
         "languages": payload.languages,
@@ -587,6 +641,8 @@ async def register_priest(payload: PriestRegister, request: Request):
         "optional_email": (payload.optional_email or "").strip(),
         "certifications": (payload.certifications or "").strip(),
         "agama_certification": (payload.agama_certification or "").strip(),
+        "agama_certificate": agama_cert or None,
+        "agama_certificate_name": (payload.agama_certificate_name or "").strip() if agama_cert else "",
         "veda_patashala": (payload.veda_patashala or "").strip(),
         "guru_name": (payload.guru_name or "").strip(),
         "awards": (payload.awards or "").strip(),
@@ -707,6 +763,44 @@ async def me_full(current: UserPublic = Depends(get_current_user)):
 async def update_me(payload: ProfileUpdate, current: UserPublic = Depends(get_current_user)):
     updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
 
+    if "mobile" in updates and not is_valid_mobile(updates["mobile"]):
+        raise HTTPException(status_code=400, detail=INVALID_MOBILE_DETAIL)
+    if (updates.get("alt_mobile") or "").strip() and not is_valid_mobile(updates["alt_mobile"]):
+        raise HTTPException(status_code=400, detail="Alternative mobile: " + INVALID_MOBILE_DETAIL)
+    if "email" in updates and not is_valid_email(str(updates["email"])):
+        raise HTTPException(status_code=400, detail="Enter a valid email address, e.g. name@gmail.com.")
+    if (updates.get("optional_email") or "").strip() and not is_valid_email(updates["optional_email"]):
+        raise HTTPException(status_code=400, detail="Alternate email: enter a valid email address, e.g. name@gmail.com.")
+
+    # Priest registration fields: same rules as register_priest.
+    for key, label in (("name", "Full Name"), ("address", "Residential Address"), ("sampradaya", "Sampradaya"), ("agama", "Agama")):
+        if key in updates and not str(updates[key]).strip():
+            raise HTTPException(status_code=400, detail=f"{label} cannot be empty")
+    if "aadhaar_number" in updates:
+        aadhaar = AADHAAR_RE.sub("", updates["aadhaar_number"] or "")
+        if len(aadhaar) != 12:
+            raise HTTPException(status_code=400, detail="Aadhaar Number must be 12 digits")
+        updates["aadhaar_number"] = aadhaar
+    if "aadhaar_proof" in updates and not updates["aadhaar_proof"].strip().startswith(PROOF_PREFIXES):
+        raise HTTPException(status_code=400, detail="Aadhaar ID Proof must be a JPEG, PNG or PDF file.")
+    if "agama_certificate" in updates:
+        if not updates["agama_certificate"].strip():
+            updates["agama_certificate"], updates["agama_certificate_name"] = None, ""
+        elif not updates["agama_certificate"].strip().startswith(PROOF_PREFIXES):
+            raise HTTPException(status_code=400, detail="Agama certificate must be a JPEG, PNG or PDF file.")
+    if "date_of_birth" in updates:
+        try:
+            dob = datetime.strptime(updates["date_of_birth"].strip(), "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Date of Birth must be in YYYY-MM-DD format")
+        if dob >= datetime.now(timezone.utc).date():
+            raise HTTPException(status_code=400, detail="Date of Birth must be in the past")
+    if updates.get("priest_type") == "temple" and "temple_name" in updates and not updates["temple_name"].strip():
+        raise HTTPException(status_code=400, detail="Temple Name is required for a Temple Priest")
+    # A new password is stored hashed on the account only — never copied into
+    # the priest_registration record below.
+    new_password = updates.pop("password", None)
+
     # Email doubles as the login identifier (scoped to (email, role)), so a
     # change has to stay unique for this role and is normalised the same way
     # registration/login normalise it (lower-cased) before any comparison.
@@ -728,20 +822,27 @@ async def update_me(payload: ProfileUpdate, current: UserPublic = Depends(get_cu
             {"id": {"$in": svc}, "is_active": True}, {"_id": 0, "id": 1, "category": 1}).to_list(5000)
         valid = {r["id"] for r in rows}
         updates["services"] = [s for s in svc if s in valid]
-        if not updates["services"] or not {r.get("category") for r in rows if r.get("category")}:
+        categories = {r.get("category") for r in rows if r.get("category")}
+        if not updates["services"] or not categories:
             raise HTTPException(status_code=400, detail="Select at least one service from a main category.")
+        if not categories - {DANA_CATEGORY}:
+            raise HTTPException(status_code=400, detail=DANA_ONLY_DETAIL)
 
     for k, v in list(updates.items()):
         if isinstance(v, str):
             updates[k] = v.strip()
 
-    if updates:
+    if updates or new_password:
+        account = dict(updates)
+        if new_password:
+            account["hashed_password"] = hash_password(new_password)
         try:
-            await db.users.update_one({"id": current.id}, {"$set": updates})
+            await db.users.update_one({"id": current.id}, {"$set": account})
         except DuplicateKeyError:
             raise HTTPException(status_code=409, detail="An account with this email already exists.")
-        # Keep the dedicated priest_registration record in sync.
-        await db.priest_registration.update_one({"user_id": current.id}, {"$set": updates})
+        # Keep the dedicated priest_registration record in sync (no password).
+        if updates:
+            await db.priest_registration.update_one({"user_id": current.id}, {"$set": updates})
 
     user = await db.users.find_one({"id": current.id}, {"_id": 0, "hashed_password": 0})
     return user_doc_to_public(user)

@@ -16,8 +16,8 @@ export default function Home() {
   return (
     <View style={styles.root} testID="home-screen">
       <View style={styles.header}>
-        <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFillObject} contentFit="cover" transition={200} />
-        <LinearGradient colors={['rgba(94,0,0,0.55)', 'rgba(150,12,12,0.88)', colors.primaryRed]} style={StyleSheet.absoluteFillObject} />
+        <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+        <LinearGradient colors={['rgba(94,0,0,0.55)', 'rgba(150,12,12,0.88)', colors.primaryRed]} style={StyleSheet.absoluteFill} />
         <SafeAreaView edges={['top']}>
           <View style={styles.headerInner}>
             <View style={styles.logoBadge}>
@@ -40,8 +40,8 @@ export default function Home() {
         {/* Devotee */}
         <View style={styles.card}>
           <View style={styles.cardTop}>
-            <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFillObject} contentFit="cover" />
-            <LinearGradient colors={['rgba(255,186,8,0.55)', 'rgba(244,140,6,0.9)']} style={StyleSheet.absoluteFillObject} />
+            <Image source={{ uri: HERO_IMG }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <LinearGradient colors={['rgba(255,186,8,0.55)', 'rgba(244,140,6,0.9)']} style={StyleSheet.absoluteFill} />
             <View style={styles.cardIconBadge}><Ionicons name="hand-left" size={24} color={colors.deepRed} /></View>
             <Text style={styles.cardTitleDark}>Yajmana (Devotee)</Text>
             <Text style={styles.cardSubDark}>Book sacred poojas and receive blessings from Yagnikas</Text>
@@ -59,8 +59,8 @@ export default function Home() {
         {/* Priest */}
         <View style={styles.card}>
           <View style={styles.cardTop}>
-            <Image source={{ uri: PRIEST_IMG }} style={StyleSheet.absoluteFillObject} contentFit="cover" />
-            <LinearGradient colors={['rgba(94,0,0,0.75)', 'rgba(94,0,0,0.92)']} style={StyleSheet.absoluteFillObject} />
+            <Image source={{ uri: PRIEST_IMG }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <LinearGradient colors={['rgba(94,0,0,0.75)', 'rgba(94,0,0,0.92)']} style={StyleSheet.absoluteFill} />
             <View style={[styles.cardIconBadge, { backgroundColor: 'rgba(255,255,255,0.15)' }]}><Ionicons name="business" size={24} color={colors.gold} /></View>
             <Text style={styles.cardTitleLight}>Yagnika (Priest)</Text>
             <Text style={styles.cardSubLight}>Register your services and receive booking requests</Text>

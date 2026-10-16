@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { colors, radius } from '@/src/theme';
-import { catMeta, catName, catDesc, subName, svcName } from '@/src/i18n/catalog';
+import { catMeta, catName, catDesc, subName, svcName, DANA_CATEGORY } from '@/src/i18n/catalog';
 
 export interface Svc { id: string; name: string; category?: string | null; subcategory?: string | null; }
 
@@ -17,6 +17,8 @@ export interface Svc { id: string; name: string; category?: string | null; subca
 //      individual rituals to tick. "Select all" per category & per
 //      subcategory. A search box (scoped to the chosen categories) appears
 //      once at least one category is selected.
+// Danas stay locked until at least one service from another category is
+// ticked, and are cleared again if the last such service is removed.
 export default function ServiceCategoryPicker({
   catalog, selected, onChange, order,
 }: {
@@ -47,20 +49,18 @@ export default function ServiceCategoryPicker({
 
   const catAllIds = (cat: string) => Object.values(grouped[cat] || {}).flat().map(s => s.id);
 
-  // Which main categories the priest has activated. Seeded from any category
-  // that already has selected services (the profile-edit case).
-  const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
-  const seeded = useRef(false);
-  useEffect(() => {
-    if (seeded.current || !catalog.length) return;
+  // Which main categories the priest has activated. Until they toggle one, it
+  // follows the selection: every category that already has selected services
+  // (the profile-edit case) is open.
+  const [chosenCats, setActiveCats] = useState<Set<string> | null>(null);
+  const activeCats = useMemo(() => {
+    if (chosenCats) return chosenCats;
     const init = new Set<string>();
-    for (const c of Object.keys(grouped)) {
-      if (catAllIds(c).some(id => selected.has(id))) init.add(c);
+    for (const [c, subs] of Object.entries(grouped)) {
+      if (Object.values(subs).flat().some(s => selected.has(s.id))) init.add(c);
     }
-    if (init.size) setActiveCats(init);
-    seeded.current = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog]);
+    return init;
+  }, [chosenCats, grouped, selected]);
 
   const [query, setQuery] = useState('');
   const q = query.trim().toLowerCase();
@@ -69,16 +69,36 @@ export default function ServiceCategoryPicker({
   const countOn = (ids: string[]) => ids.filter(id => selected.has(id)).length;
   const allOn = (ids: string[]) => ids.length > 0 && ids.every(id => selected.has(id));
 
+  const categoryOf = useMemo(() => new Map(catalog.map(s => [s.id, s.category || ''])), [catalog]);
+  const hasNonDana = (sel: Set<string>) =>
+    Array.from(sel).some(id => { const c = categoryOf.get(id); return !!c && c !== DANA_CATEGORY; });
+  const danaUnlocked = hasNonDana(selected);
+
+  // Applies a new selection. Without any non-Dana service left, Dana picks
+  // are dropped and the Dana category is closed.
+  const commit = (next: Set<string>, nextActive: Set<string> = activeCats) => {
+    if (!hasNonDana(next)) {
+      catAllIds(DANA_CATEGORY).forEach(id => next.delete(id));
+      if (nextActive.has(DANA_CATEGORY)) {
+        nextActive = new Set(nextActive);
+        nextActive.delete(DANA_CATEGORY);
+      }
+    }
+    onChange(next);
+    if (nextActive !== activeCats) setActiveCats(nextActive);
+  };
+
   const toggleService = (id: string) => {
     const n = new Set(selected);
-    n.has(id) ? n.delete(id) : n.add(id);
-    onChange(n);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    commit(n);
   };
   const bulk = (ids: string[]) => {
     const n = new Set(selected);
     const on = allOn(ids);
     ids.forEach(id => (on ? n.delete(id) : n.add(id)));
-    onChange(n);
+    commit(n);
   };
   const toggleMain = (cat: string) => {
     const n = new Set(activeCats);
@@ -86,15 +106,14 @@ export default function ServiceCategoryPicker({
       n.delete(cat);
       // Switching a category off also clears any rituals chosen under it,
       // so there are never "orphan" selections in a deselected category.
-      const drop = catAllIds(cat);
       const s = new Set(selected);
-      let changed = false;
-      drop.forEach(id => { if (s.delete(id)) changed = true; });
-      if (changed) onChange(s);
+      catAllIds(cat).forEach(id => s.delete(id));
+      commit(s, n);
     } else {
+      if (cat === DANA_CATEGORY && !danaUnlocked) return;
       n.add(cat);
+      setActiveCats(n);
     }
-    setActiveCats(n);
   };
 
   const anyActive = activeCats.size > 0;
@@ -134,9 +153,11 @@ export default function ServiceCategoryPicker({
         const allIds = catAllIds(cat);
         const subs = grouped[cat] || {};
         const chosen = countOn(allIds);
+        const locked = cat === DANA_CATEGORY && !active && !danaUnlocked;
         return (
-          <View key={cat} style={[styles.card, active && styles.cardOn]}>
-            <Pressable onPress={() => toggleMain(cat)} style={styles.cardHead} testID={`svc-cat-${meta.slug}`}>
+          <View key={cat} style={[styles.card, active && styles.cardOn, locked && styles.cardLocked]}>
+            <Pressable onPress={() => toggleMain(cat)} disabled={locked} accessibilityState={{ disabled: locked }}
+              style={styles.cardHead} testID={`svc-cat-${meta.slug}`}>
               <View style={[styles.glyphWrap, { backgroundColor: meta.color + '22' }]}>
                 <Text style={[styles.glyph, { color: meta.color }]}>{meta.glyph}</Text>
               </View>
@@ -146,12 +167,17 @@ export default function ServiceCategoryPicker({
                   ? <Text style={styles.cardMeta}>{t('catalog.ui.ritualsSelected', { n: chosen, total: allIds.length })}</Text>
                   : <Text style={styles.cardMetaDim}>{t('catalog.ui.tapToChoose', { total: allIds.length })}</Text>}
               </View>
-              <View style={[styles.check, active && styles.checkOn]}>
-                {active && <Ionicons name="checkmark" size={14} color="#FFF" />}
-              </View>
+              {locked
+                ? <Ionicons name="lock-closed" size={18} color={colors.gray400} />
+                : (
+                  <View style={[styles.check, active && styles.checkOn]}>
+                    {active && <Ionicons name="checkmark" size={14} color="#FFF" />}
+                  </View>
+                )}
             </Pressable>
 
             <Text style={styles.blurb}>{catDesc(t, cat)}</Text>
+            {locked && <Text style={styles.lockedHint} testID="svc-dana-locked">{t('catalog.ui.danaNeedsOther')}</Text>}
 
             {active && (
               <View style={styles.body}>
@@ -210,6 +236,8 @@ const styles = StyleSheet.create({
 
   card: { borderWidth: 1, borderColor: colors.gray200, borderRadius: radius.md, marginBottom: 10, padding: 12, backgroundColor: '#FFF' },
   cardOn: { borderColor: colors.orange, backgroundColor: '#FFFDF9' },
+  cardLocked: { backgroundColor: colors.gray50 },
+  lockedHint: { fontSize: 11.5, fontWeight: '700', color: colors.amber700, lineHeight: 16, marginTop: 6 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   glyphWrap: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   glyph: { fontSize: 16, fontWeight: '800' },

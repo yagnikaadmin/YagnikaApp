@@ -279,19 +279,23 @@ RAHUKALAM_SEGMENT = {0: 2, 1: 7, 2: 5, 3: 6, 4: 4, 5: 3, 6: 8}
 YAMAGANDA_SEGMENT = {0: 4, 1: 3, 2: 2, 3: 1, 4: 7, 5: 6, 6: 5}
 GULIKA_SEGMENT = {0: 6, 1: 5, 2: 4, 3: 3, 4: 2, 5: 1, 6: 7}
 
-# Dur Muhurtam muhurta indices (1-15, dividing sunrise→sunset into 15 equal
-# muhurtas) per weekday, keyed Monday=0 .. Sunday=6. Values match PVR
-# Narasimha Rao's JHora (via PyJHora's per-weekday sunrise-offset table) and
-# were spot-checked against drikpanchang. Imported by core/muhurtam.py so
-# both code paths stay in sync.
+# Dur Muhurtam per weekday, keyed Monday=0 .. Sunday=6. Day indices are
+# 1-15 of the 15 equal muhurtas from sunrise to sunset; night indices are
+# 1-15 of the 15 muhurtas from sunset to the next sunrise. Verified against
+# Drik Panchang (Hyderabad, all seven weekdays): Saturday is the 1st and 2nd
+# day muhurtas, and Tuesday's second Dur Muhurtam is the 7th *night* muhurta.
+# Imported by muhurtam.py so both code paths stay in sync.
 DUR_MUHURTA_INDICES = {
     0: [9, 12],   # Monday
-    1: [4, 7],    # Tuesday
+    1: [4],       # Tuesday (+ night 7, below)
     2: [8],       # Wednesday
     3: [6, 12],   # Thursday
     4: [4, 9],    # Friday
-    5: [3],       # Saturday
+    5: [1, 2],    # Saturday
     6: [14],      # Sunday
+}
+DUR_MUHURTA_NIGHT_INDICES = {
+    1: [7],       # Tuesday
 }
 
 # Per-nakshatra start points (Aśvinī .. Revatī) for Varjyam and Amrita Kalam,
@@ -312,6 +316,8 @@ NAKSHATRA_AMRITA_GHATIS = (
 
 
 def _fmt_time(dt: datetime) -> str:
+    # Rounded to the nearest minute (6:09:50 -> 6:10), as Drik Panchang shows times.
+    dt = (dt + timedelta(seconds=30)).replace(second=0, microsecond=0)
     return dt.strftime("%I:%M %p").lstrip("0")
 
 
@@ -447,58 +453,163 @@ def _find_tithi_span(masa_start_nm_utc: datetime, tithi_idx: int) -> tuple[datet
     return start, end
 
 
-def _touched_civil_days(start_utc: datetime, end_utc: datetime, tz: timezone) -> list[date]:
-    """Every local calendar date the [start_utc, end_utc) span touches at
-    all — usually one day, but a tithi that starts mid-day and runs past
-    midnight touches two, and a long tithi (vriddhi, up to ~26h) starting
-    late enough in a day can touch three, fully covering the day in
-    between. We show the festival on every day it touches rather than
-    picking one "correct" day, since which single day classical sources
-    treat as correct can itself vary by kaal/tradition/location."""
-    d0 = start_utc.astimezone(tz).date()
-    d1 = (end_utc - timedelta(microseconds=1)).astimezone(tz).date()
-    days = []
-    d = d0
-    while d <= d1:
-        days.append(d)
-        d += timedelta(days=1)
-    return days
+def _kaal_instant(d: date, kaal: str, observer, tz: timezone) -> datetime:
+    """UTC instant of a traditional time of day on civil date `d`:
+    arunodaya (96 min before sunrise), sunrise, madhyahna (midday), aparahna
+    (afternoon, 70% of the day), sunset, pradosh (1.5 night-muhurtas after
+    sunset) or nishita (middle of the night)."""
+    s0 = sun(observer, date=d, tzinfo=tz)
+    sr, ss = s0["sunrise"], s0["sunset"]
+    nsr = sun(observer, date=d + timedelta(days=1), tzinfo=tz)["sunrise"]
+    day, night = ss - sr, nsr - ss
+    t = {
+        "arunodaya": sr - timedelta(minutes=96),
+        "sunrise": sr,
+        "madhyahna": sr + day * 0.5,
+        "aparahna": sr + day * 0.7,
+        "sunset": ss,
+        "pradosh": ss + night / 15 * 1.5,
+        "nishita": ss + night / 2,
+    }[kaal]
+    return t.astimezone(timezone.utc)
 
 
-# (key, masa_idx, tithi_idx, search_start_month) — masa_idx is Amanta
+def _observance_day(start_utc: datetime, end_utc: datetime, kaal: str, observer, tz: timezone) -> date:
+    """The single civil day a tithi festival is observed on: the first day
+    whose `kaal` falls inside the tithi [start_utc, end_utc). If the tithi
+    misses that moment on every day (it can be shorter than a day), it's the
+    day the tithi begins.
+
+    Ekadashi follows the Smarta rule: the day Ekadashi is current at sunrise,
+    unless it lasts less than 2 ghatis (48 min) past that sunrise, in which
+    case it's the previous day (Drik Panchang then lists the later day as the
+    "Gauna" Ekadashi)."""
+    first = start_utc.astimezone(tz).date()
+    if kaal == "navami":
+        return _navami_day(start_utc, end_utc, observer, tz)
+    if kaal == "raksha":
+        return _raksha_bandhan_day(start_utc, end_utc, observer, tz)
+    if kaal == "janmashtami":
+        return _janmashtami_day(start_utc, end_utc, observer, tz)
+    look = "sunrise" if kaal == "ekadashi" else kaal
+    for i in range(-1, 3):
+        d = first + timedelta(days=i)
+        t = _kaal_instant(d, look, observer, tz)
+        if start_utc <= t < end_utc:
+            if kaal == "ekadashi" and end_utc - t < timedelta(minutes=48):
+                return d - timedelta(days=1)
+            return d
+    return first
+
+
+# (key, masa_idx, tithi_idx, search_start_month, kaal) — masa_idx is Amanta
 # convention (0=Chaitra); search_start_month anchors the new-moon search to
 # well before the festival's typical month so it's found reliably even in
 # years with an Adhika Masa shifting things later.
+#
+# `kaal` is the traditional time of day at which the festival's tithi must be
+# in effect; the festival is observed on the first day that holds (see
+# _observance_day). Every rule here reproduces Drik Panchang's 2026 dates for
+# Hyderabad (tests/test_panchangam.py).
 _TITHI_FESTIVALS = [
-    ("ugadi",               0,  0, 2),
-    ("rama_navami",         0,  8, 2),
-    ("hanuman_jayanthi",    0, 14, 2),   # Chaitra Purnima
-    ("narasimha_jayanthi",  1, 13, 3),   # Vaishakha Shukla Chaturdashi
-    ("guru_pournami",       3, 14, 5),   # Ashadha Purnima
-    ("polala_amavasya",     4, 29, 7),   # Shravana Amavasya
-    ("naga_panchami",       4,  4, 7),
-    ("raksha_bandhan",      4, 14, 7),
-    ("krishna_janmashtami", 4, 22, 7),
-    ("vinayaka_chavithi",   5,  3, 7),
-    ("ganesh_nimajjanam",   5, 13, 7),
-    ("maha_shivaratri",    10, 28, 1),
-    ("holika_dahan",       11, 14, 1),   # Phalguna Purnima (bonfire night)
-    ("holi",               11, 15, 1),   # Phalguna Krishna Pratipada (Rangwali Holi, the color-play day)
-    ("atla_tadde",          6, 17, 9),   # Ashwina Krishna Tritiya
-    ("naraka_chaturdashi",  6, 28, 9),
-    ("diwali",              6, 29, 9),
-    ("vijayadashami",       6,  9, 9),
-    ("nagula_chavithi",     7,  3, 9),   # Karthika Shukla Chaturthi
-    ("karthika_pournami",   7, 14, 9),
+    ("ugadi",               0,  0, 2, "sunrise"),
+    ("rama_navami",         0,  8, 2, "navami"),
+    ("hanuman_jayanthi",    1, 24, 3, "sunrise"),    # Telugu: Vaishakha Bahula Dashami
+    ("narasimha_jayanthi",  1, 13, 3, "sunset"),     # Vaishakha Shukla Chaturdashi, at dusk
+    ("guru_pournami",       3, 14, 5, "sunrise"),    # Ashadha Purnima
+    ("polala_amavasya",     4, 29, 7, "aparahna"),   # Shravana Amavasya
+    ("naga_panchami",       4,  4, 7, "sunrise"),
+    ("raksha_bandhan",      4, 14, 7, "raksha"),
+    ("krishna_janmashtami", 4, 22, 7, "janmashtami"),  # Ashtami at midnight, Rohini preferred
+    ("vinayaka_chavithi",   5,  3, 7, "madhyahna"),
+    ("ganesh_nimajjanam",   5, 13, 7, "sunrise"),
+    ("maha_shivaratri",    10, 28, 1, "nishita"),
+    ("holika_dahan",       11, 14, 1, "pradosh"),    # Phalguna Purnima at pradosh
+    ("holi",               11, 15, 1, "after_holika"),  # Rangwali Holi: the day after Holika Dahan
+    ("atla_tadde",          6, 17, 9, "sunrise"),    # Ashwina Krishna Tritiya
+    ("naraka_chaturdashi",  6, 28, 9, "arunodaya"),
+    ("diwali",              6, 29, 9, "pradosh"),
+    ("vijayadashami",       6,  9, 9, "aparahna"),
+    ("nagula_chavithi",     7,  3, 9, "sunrise"),    # Karthika Shukla Chaturthi
+    ("karthika_pournami",   7, 14, 9, "sunrise"),
     # "Big" named Ekadashis (all Shukla Paksha, tithi_idx 10), each verified
     # against multiple external sources before adding:
-    ("nirjala_ekadasi",     2, 10, 4),   # Jyeshtha Shukla Ekadashi
-    ("toli_ekadasi",        3, 10, 5),   # Ashadha Shukla Ekadashi (Devshayani)
-    ("chiluka_ekadasi",     7, 10, 9),   # Karthika Shukla Ekadashi (Utthana/Prabodhini)
-    ("vaikuntha_ekadasi",   8, 10, 10),  # Margashirsha Shukla Ekadashi (Mokshada)
-    ("gita_jayanthi",       8, 10, 10),  # Margashirsha Shukla Ekadashi (same day as Mokshada Ekadashi)
-    ("bhishma_ekadasi",    10, 10, 1),   # Magha Shukla Ekadashi (Jaya)
+    ("nirjala_ekadasi",     2, 10, 4, "ekadashi"),   # Jyeshtha Shukla Ekadashi
+    ("toli_ekadasi",        3, 10, 5, "ekadashi"),   # Ashadha Shukla Ekadashi (Devshayani)
+    ("chiluka_ekadasi",     7, 10, 9, "ekadashi"),   # Karthika Shukla Ekadashi (Utthana/Prabodhini)
+    ("vaikuntha_ekadasi",   8, 10, 10, "ekadashi"),  # Margashirsha Shukla Ekadashi (Mokshada)
+    ("gita_jayanthi",       8, 10, 10, "ekadashi"),  # Margashirsha Shukla Ekadashi (same day as Mokshada Ekadashi)
+    ("bhishma_ekadasi",    10, 10, 1, "ekadashi"),   # Magha Shukla Ekadashi (Jaya)
 ]
+
+
+def _day_times(d: date, observer, tz: timezone) -> tuple[datetime, datetime]:
+    s0 = sun(observer, date=d, tzinfo=tz)
+    return s0["sunrise"].astimezone(timezone.utc), s0["sunset"].astimezone(timezone.utc)
+
+
+def _overlap(a0: datetime, a1: datetime, b0: datetime, b1: datetime) -> timedelta:
+    return max(timedelta(0), min(a1, b1) - max(a0, b0))
+
+
+def _navami_day(start_utc: datetime, end_utc: datetime, observer, tz: timezone) -> date:
+    """Rama Navami: the day Navami covers Madhyahna (the middle fifth of the
+    day). If it touches Madhyahna on both days, the day Navami is current at
+    sunrise (avoiding the Ashtami-viddha first day). Drik Panchang 2026, 2027,
+    2029: 26 Mar, 15 Apr, 23 Apr."""
+    first = start_utc.astimezone(tz).date()
+    hits = []
+    for d in (first, first + timedelta(days=1)):
+        sr, ss = _day_times(d, observer, tz)
+        if _overlap(start_utc, end_utc, sr + (ss - sr) * 0.4, sr + (ss - sr) * 0.6) > timedelta(0):
+            hits.append((d, start_utc <= sr < end_utc))
+    if len(hits) == 2:
+        return next((d for d, at_sunrise in hits if at_sunrise), hits[0][0])
+    return hits[0][0] if hits else first
+
+
+def _raksha_bandhan_day(start_utc: datetime, end_utc: datetime, observer, tz: timezone) -> date:
+    """Raksha Bandhan: Shravana Purnima in Aparahna, avoiding Bhadra (the
+    first half of Purnima). If Bhadra covers that afternoon, the next day —
+    provided Purnima still lasts 6 ghatis (2h24m) past its sunrise; otherwise
+    the same day, after Bhadra ends. Drik Panchang: 28 Aug 2026, 30 Aug 2023,
+    17 Aug 2027."""
+    bhadra_end = start_utc + (end_utc - start_utc) / 2
+    first = start_utc.astimezone(tz).date()
+    for d in (first - timedelta(days=1), first, first + timedelta(days=1)):
+        sr, ss = _day_times(d, observer, tz)
+        aparahna = sr + (ss - sr) * 0.7
+        if not (start_utc <= aparahna < end_utc):
+            continue
+        if aparahna >= bhadra_end:
+            return d
+        next_sr, _ = _day_times(d + timedelta(days=1), observer, tz)
+        if end_utc - next_sr >= timedelta(minutes=144):
+            return d + timedelta(days=1)
+        return d
+    return first
+
+
+def _janmashtami_day(start_utc: datetime, end_utc: datetime, observer, tz: timezone) -> date:
+    """Krishna Janmashtami: the night Ashtami covers Nishita (midnight). If
+    that night lacks Rohini but the next day has Ashtami at sunrise and Rohini
+    at midnight (Jayanti yoga), the next day. Drik Panchang: 6 Sep 2023,
+    4 Sep 2026, 25 Aug 2027, 9 Aug 2031."""
+    first = start_utc.astimezone(tz).date()
+
+    def rohini_at(t: datetime) -> bool:
+        return int(_sun_moon_longitudes(_julian_day_ut(t))[1] / (360.0 / 27)) == 3
+
+    for d in (first - timedelta(days=1), first, first + timedelta(days=1)):
+        nishita = _kaal_instant(d, "nishita", observer, tz)
+        if start_utc <= nishita < end_utc:
+            nxt = d + timedelta(days=1)
+            if not rohini_at(nishita):
+                sr_next, _ = _day_times(nxt, observer, tz)
+                if start_utc <= sr_next < end_utc and rohini_at(_kaal_instant(nxt, "nishita", observer, tz)):
+                    return nxt
+            return d
+    return first
 
 
 @lru_cache(maxsize=8)
@@ -507,31 +618,10 @@ def _compute_tithi_spans_raw(year: int) -> dict[str, tuple[datetime, datetime]]:
     festival — purely astronomical, so location-independent (unlike the
     civil days it lands on, which depend on timezone/sunrise/sunset)."""
     out = {}
-    for key, masa_idx, tithi_idx, month in _TITHI_FESTIVALS:
+    for key, masa_idx, tithi_idx, month, _kaal in _TITHI_FESTIVALS:
         nm = _find_masa_start_new_moon(year, masa_idx, month)
         out[key] = _find_tithi_span(nm, tithi_idx)
     return out
-
-
-def _drop_negligible_edge_days(
-    days: list[date], start_utc: datetime, end_utc: datetime, lat: float, lon: float, tz: timezone,
-) -> list[date]:
-    """Trim a touched-days list of edge days where the tithi's presence is
-    negligible: the last day if the tithi already ended before that day's
-    sunrise (a pre-dawn sliver nobody would observe it on), and the first
-    day if the tithi didn't start until after that day's sunset (a late-
-    evening sliver that really belongs to the next day instead)."""
-    if len(days) <= 1:
-        return days
-    loc = LocationInfo("here", "in", "UTC", lat, lon).observer
-    last_sunrise = sun(loc, date=days[-1], tzinfo=tz)["sunrise"].astimezone(timezone.utc)
-    if end_utc <= last_sunrise:
-        days = days[:-1]
-    if len(days) > 1:
-        first_sunset = sun(loc, date=days[0], tzinfo=tz)["sunset"].astimezone(timezone.utc)
-        if start_utc >= first_sunset:
-            days = days[1:]
-    return days
 
 
 @lru_cache(maxsize=64)
@@ -543,15 +633,27 @@ def _compute_tithi_festival_spans(
     for every tithi-based festival."""
     tz = timezone(timedelta(minutes=tz_offset_min))
     raw = _compute_tithi_spans_raw(year)
+    observer = LocationInfo("here", "in", "UTC", lat, lon).observer
+    kaals = {key: kaal for key, _m, _t, _mo, kaal in _TITHI_FESTIVALS}
     out = {}
     for key, (start_utc, end_utc) in raw.items():
-        days = _touched_civil_days(start_utc, end_utc, tz)
-        days = _drop_negligible_edge_days(days, start_utc, end_utc, lat, lon, tz)
+        if kaals[key] == "after_holika":
+            continue  # resolved below, from Holika Dahan
+        day = _observance_day(start_utc, end_utc, kaals[key], observer, tz)
         out[key] = {
-            "dates": days,
+            "dates": [day],
             "start_local": start_utc.astimezone(tz),
             "end_local": end_utc.astimezone(tz),
         }
+    # Rangwali Holi is the day after Holika Dahan (Drik Panchang 2027: 21 / 22
+    # Mar). Exception not modelled: in an eclipse year like 2026 (Chandra
+    # Grahan on Phalguna Purnima) panchangs split between 2 and 3 Mar.
+    hs, he = raw["holi"]
+    out["holi"] = {
+        "dates": [out["holika_dahan"]["dates"][0] + timedelta(days=1)],
+        "start_local": hs.astimezone(tz),
+        "end_local": he.astimezone(tz),
+    }
     return out
 
 
@@ -612,6 +714,18 @@ def _signed_phase_diff(dt_utc: datetime, target_diff: float) -> float:
 
 
 def _find_moon_phase(dt_utc: datetime, target_diff: float, direction: int) -> datetime:
+    found = _scan_moon_phase(dt_utc, target_diff, direction)
+    # The scan brackets a crossing within ±6h of the first close-enough step,
+    # which can land on the wrong side of `dt_utc` (a "previous" new moon that
+    # is actually a few hours ahead). Search again from a day further out.
+    if direction < 0 and found > dt_utc:
+        found = _scan_moon_phase(dt_utc - timedelta(days=1), target_diff, direction)
+    elif direction > 0 and found < dt_utc:
+        found = _scan_moon_phase(dt_utc + timedelta(days=1), target_diff, direction)
+    return found
+
+
+def _scan_moon_phase(dt_utc: datetime, target_diff: float, direction: int) -> datetime:
     step = timedelta(hours=6) * direction
     cur = dt_utc
     for _ in range(240):
@@ -645,16 +759,22 @@ def _find_moon_phase(dt_utc: datetime, target_diff: float, direction: int) -> da
     return dt_utc
 
 
+# Moonrise/moonset use the Moon's disc centre without refraction — this is the
+# convention Drik Panchang follows (checked on 3 dates: within 1 minute),
+# unlike sunrise, which uses the upper limb with refraction.
+MOON_RISE_FLAGS = RiseSetFlags.DISC_CENTER | RiseSetFlags.NO_REFRACTION
+
+
 def _moon_events(jd_start: float, lat: float, lon: float) -> tuple[datetime | None, datetime | None]:
     geopos = (lon, lat, 0.0)
     try:
-        rise_res = eph.rise_trans(jd_start, Body.MOON, None, CalcFlags.SWIEPH, RiseSetFlags.RISE, geopos, 0.0, 0.0)
+        rise_res = eph.rise_trans(jd_start, Body.MOON, None, CalcFlags.SWIEPH, RiseSetFlags.RISE | MOON_RISE_FLAGS, geopos, 0.0, 0.0)
         rise_jd = rise_res.time if hasattr(rise_res, "time") else (rise_res[0] if isinstance(rise_res, tuple) else rise_res.data[0])
     except Exception:
         rise_jd = None
 
     try:
-        set_res = eph.rise_trans(jd_start, Body.MOON, None, CalcFlags.SWIEPH, RiseSetFlags.SET, geopos, 0.0, 0.0)
+        set_res = eph.rise_trans(jd_start, Body.MOON, None, CalcFlags.SWIEPH, RiseSetFlags.SET | MOON_RISE_FLAGS, geopos, 0.0, 0.0)
         set_jd = set_res.time if hasattr(set_res, "time") else (set_res[0] if isinstance(set_res, tuple) else set_res.data[0])
     except Exception:
         set_jd = None
@@ -705,17 +825,24 @@ def compute_panchangam(target_date: date, lat: float, lon: float, tz_offset_min:
     yoga_idx = int(yoga_val / nakshatra_unit)
     yoga_name = YOGA_NAMES[yoga_idx]
 
-    def _find_yoga_end():
-        step = timedelta(minutes=5)
+    def _yoga_idx(t: datetime) -> int:
+        sl, ml = _sun_moon_longitudes(_julian_day_ut(t))
+        return int(((sl + ml) % 360) / nakshatra_unit)
+
+    def _find_yoga_end() -> datetime:
+        step = timedelta(minutes=2)
         cur = sunrise_utc
         end = sunrise_utc + timedelta(hours=30)
-        prev = yoga_idx
         while cur < end:
-            jd = _julian_day_ut(cur)
-            sl, ml = _sun_moon_longitudes(jd)
-            v = (sl + ml) % 360
-            i = int(v / nakshatra_unit)
-            if i != prev: return cur
+            if _yoga_idx(cur) != yoga_idx:
+                lo, hi = cur - step, cur
+                for _ in range(10):
+                    mid = lo + (hi - lo) / 2
+                    if _yoga_idx(mid) == yoga_idx:
+                        lo = mid
+                    else:
+                        hi = mid
+                return hi
             cur += step
         return end
     yoga_end_utc = _find_yoga_end()
@@ -771,9 +898,11 @@ def compute_panchangam(target_date: date, lat: float, lon: float, tz_offset_min:
         masa = MASA_NAMES[masa_idx]
         masa_label = "Māsa (Amānta)"
     else:
-        prev_fm = _find_prev_full_moon(sunrise_utc)
-        next_nm = _find_next_new_moon(prev_fm)
-        masa_idx, is_adhika_masa = _masa_and_adhika(next_nm)
+        prev_nm = _find_prev_new_moon(sunrise_utc)
+        masa_idx, is_adhika_masa = _masa_and_adhika(prev_nm)
+        if not is_adhika_masa and tithi_idx >= 15:
+            next_nm = _find_next_new_moon(prev_nm + timedelta(days=1))
+            masa_idx, _ = _masa_and_adhika(next_nm)
         masa = MASA_NAMES[masa_idx]
         masa_label = "Māsa (Pūrṇimānta)"
 
@@ -793,12 +922,22 @@ def compute_panchangam(target_date: date, lat: float, lon: float, tz_offset_min:
     # the user has selected. `makar_sankranti_date` was already computed
     # above for Ayanam and is reused here.
 
+    # Searched from local midnight: the first moonrise/moonset of the calendar
+    # day. If there is none that day (the Moon rises/sets ~50 min later each
+    # day, so roughly once a month one is skipped) the next one is shown,
+    # marked "(+1)" — as Drik Panchang shows e.g. "12:52 AM, Apr 14".
     try:
-        mrise_utc, mset_utc = _moon_events(jd_sunrise - 0.5, lat, lon)
+        local_midnight = datetime.combine(target_date, time(0, 0), tzinfo=tz)
+        mrise_utc, mset_utc = _moon_events(_julian_day_ut(local_midnight.astimezone(timezone.utc)), lat, lon)
         moonrise = mrise_utc.astimezone(tz) if mrise_utc else None
         moonset = mset_utc.astimezone(tz) if mset_utc else None
     except Exception:
         moonrise, moonset = None, None
+
+    def _moon_text(dt: datetime | None) -> str:
+        if dt is None:
+            return "—"
+        return _fmt_time(dt) + (" (+1)" if dt.date() > target_date else "")
 
     # --- Restore Astrological Kalas ---
     day_seg = (sunset - sunrise) / 8
@@ -821,44 +960,70 @@ def compute_panchangam(target_date: date, lat: float, lon: float, tz_offset_min:
         prev_sunset = sun(loc.observer, date=target_date - timedelta(days=1), tzinfo=tz)["sunset"]
     except Exception:
         prev_sunset = sunrise - timedelta(hours=12)
+    try:
+        next_sunrise = sun(loc.observer, date=target_date + timedelta(days=1), tzinfo=tz)["sunrise"]
+    except Exception:
+        next_sunrise = sunrise + timedelta(days=1)
     night_muhurta = (sunrise - prev_sunset) / 15
     brahma_s = sunrise - night_muhurta * 2
     brahma_e = sunrise - night_muhurta
 
     muhurta_len = (sunset - sunrise) / 15
-    abhijit_s = sunrise + muhurta_len * 7
-    abhijit_e = sunrise + muhurta_len * 8
+    # Abhijit is not observed on Wednesdays (Drik Panchang shows "None").
+    abhijit_periods = [] if weekday == 2 else [(sunrise + muhurta_len * 7, sunrise + muhurta_len * 8)]
 
     # Varjyam and Amrita Kalam come from the Moon's nakshatra, not a fixed
     # clock offset from sunrise. Each nakshatra has its own start point for
     # each, in ghatis-from-nakshatra-start (out of 60); both spans last
-    # 4 ghatis. Every fraction is scaled to the nakshatra's real duration,
-    # and if a period has already ended before sunrise we roll forward to
-    # the next nakshatra's occurrence.
+    # 4 ghatis, every fraction scaled to the nakshatra's real duration.
+    # A period belongs to the panchang day (sunrise -> next sunrise) in which
+    # it STARTS, as on Drik Panchang — so a day can have none, one or two.
     nakshatra_start_utc = _find_start_time(sunrise_utc, nakshatra_idx, nakshatra_unit, diff=False)
+    next_sunrise_utc = next_sunrise.astimezone(timezone.utc)
 
-    def _nakshatra_kala(ghati_table: tuple[int, ...]) -> tuple[datetime, datetime]:
+    def _nakshatra_kala(ghati_table: tuple[int, ...]) -> list[tuple[datetime, datetime]]:
         idx, n_start, n_end = nakshatra_idx, nakshatra_start_utc, nakshatra_end_utc
-        s = e = sunrise_utc
-        for _ in range(3):
+        out = []
+        while n_start < next_sunrise_utc:
             span = n_end - n_start
-            s = n_start + span * (ghati_table[idx] / 60.0)
-            e = s + span * (4.0 / 60.0)
-            if e >= sunrise_utc:
-                break
+            s0 = n_start + span * (ghati_table[idx] / 60.0)
+            if sunrise_utc <= s0 < next_sunrise_utc:
+                out.append((s0, s0 + span * (4.0 / 60.0)))
             idx = (idx + 1) % 27
             n_start = n_end
             n_end = _find_end_time(n_start + timedelta(minutes=1), idx, nakshatra_unit, diff=False)
-        return s, e
+        return out
 
-    varjyam_s, varjyam_e = _nakshatra_kala(NAKSHATRA_VARJYAM_GHATIS)
-    amrita_s, amrita_e = _nakshatra_kala(NAKSHATRA_AMRITA_GHATIS)
+    varjyam_periods = _nakshatra_kala(NAKSHATRA_VARJYAM_GHATIS)
+    amrita_periods = _nakshatra_kala(NAKSHATRA_AMRITA_GHATIS)
 
-    dur_periods = []
-    for i in DUR_MUHURTA_INDICES.get(weekday, [12]):
-        s0 = sunrise + muhurta_len * (i - 1)
-        e0 = sunrise + muhurta_len * i
-        dur_periods.append((s0, e0))
+    night_len = (next_sunrise - sunset) / 15
+    dur_periods = [
+        (sunrise + muhurta_len * (i - 1), sunrise + muhurta_len * i)
+        for i in DUR_MUHURTA_INDICES.get(weekday, [])
+    ] + [
+        (sunset + night_len * (i - 1), sunset + night_len * i)
+        for i in DUR_MUHURTA_NIGHT_INDICES.get(weekday, [])
+    ]
+
+    # Exact periods per kala (local ISO timestamps). The display strings below
+    # carry clock times only; the app uses these for the "current kala"
+    # highlight, its countdown and "next day" markers.
+    kala_periods = {
+        "brahma_muhurta": [(brahma_s, brahma_e)],
+        "abhijit_muhurta": abhijit_periods,
+        "amrita_kala": amrita_periods,
+        "rahukalam": [(rahu_s, rahu_e)],
+        "yamaganda": [(yama_s, yama_e)],
+        "gulika": [(gulika_s, gulika_e)],
+        "durmuhurta": dur_periods,
+        "varjyam": varjyam_periods,
+    }
+
+    def _span_text(periods: list[tuple[datetime, datetime]]) -> str:
+        if not periods:
+            return "---"
+        return " / ".join(f"{_fmt_time(a.astimezone(tz))} – {_fmt_time(b.astimezone(tz))}" for a, b in periods)
 
     def _till_dict(end_utc: datetime) -> dict[str, str]:
         end_local = end_utc.astimezone(tz)
@@ -918,22 +1083,14 @@ def compute_panchangam(target_date: date, lat: float, lon: float, tz_offset_min:
             "sunset_iso": sunset.isoformat(),
         },
         "lunar": {
-            "moonrise": _fmt_time(moonrise) if moonrise else "—",
-            "moonset": _fmt_time(moonset) if moonset else "—",
+            "moonrise": _moon_text(moonrise),
+            "moonset": _moon_text(moonset),
             "moon_illumination": round(50 * (1 - math.cos(math.radians(diff))), 1),
         },
-        "kalas": {
-            "brahma_muhurta": f"{_fmt_time(brahma_s.astimezone(tz))} – {_fmt_time(brahma_e.astimezone(tz))}",
-            "abhijit_muhurta": f"{_fmt_time(abhijit_s.astimezone(tz))} – {_fmt_time(abhijit_e.astimezone(tz))}",
-            "amrita_kala": f"{_fmt_time(amrita_s.astimezone(tz))} – {_fmt_time(amrita_e.astimezone(tz))}",
-            "rahukalam": f"{_fmt_time(rahu_s.astimezone(tz))} – {_fmt_time(rahu_e.astimezone(tz))}",
-            "yamaganda": f"{_fmt_time(yama_s.astimezone(tz))} – {_fmt_time(yama_e.astimezone(tz))}",
-            "gulika": f"{_fmt_time(gulika_s.astimezone(tz))} – {_fmt_time(gulika_e.astimezone(tz))}",
-            "durmuhurta": " / ".join(
-                f"{_fmt_time(s.astimezone(tz))} – {_fmt_time(e.astimezone(tz))}"
-                for s, e in dur_periods
-            ),
-            "varjyam": f"{_fmt_time(varjyam_s.astimezone(tz))} – {_fmt_time(varjyam_e.astimezone(tz))}",
+        "kalas": {key: _span_text(periods) for key, periods in kala_periods.items()},
+        "kala_periods": {
+            key: [{"start": a.astimezone(tz).isoformat(), "end": b.astimezone(tz).isoformat()} for a, b in periods]
+            for key, periods in kala_periods.items()
         },
         "extended": extended,
     }

@@ -30,10 +30,9 @@ from panchangam.panchangam import (
     PAKSHA_NAMES,
     TITHI_NAMES,
     RAHUKALAM_SEGMENT,
-    DUR_MUHURTA_INDICES,
+    _fmt_time,
 )
 
-J2000_EPOCH = datetime(2000, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 RASI_NAMES = [
     {"en": "Mesha (Aries)", "te": "మేషం", "hi": "मेष", "ta": "மேஷம்", "kn": "ಮೇಷ", "ml": "മേഷം"},
@@ -93,22 +92,10 @@ SHUNYA_TITHIS = {
     "Pauṣa": (4, 5), "Māgha": (5, 6), "Phālguna": (3, 4),
 }
 
-VARJYAM_START_GHATIS = [
-    0, 50, 24, 30, 40, 14, 21, 30, 20, 32, 30, 20, 18,
-    21, 20, 14, 14, 10, 14, 20, 24, 20, 10, 10, 18, 16, 24, 30,
-]
-
-# Durmuhurtam muhurta indices (1-15, dividing sunrise-sunset) per weekday
-# now live in core/panchangam.py as DUR_MUHURTA_INDICES and are imported
-# above, so this module and the main panchangam can never drift apart.
-
-
-def _fmt_time(dt: datetime) -> str:
-    return dt.strftime("%I:%M %p").lstrip("0")
-
-
-def _jd_to_utc_datetime(jd: float) -> datetime:
-    return J2000_EPOCH + timedelta(days=(jd - 2451545.0))
+# Durmuhurtam and Varjyam are not recomputed here: they come from
+# compute_panchangam's exact `kala_periods` (night Durmuhurtam included,
+# Varjyam scaled to each nakshatra's real length), so this module and the
+# panchangam shown in the app can never drift apart.
 
 
 @dataclass
@@ -130,6 +117,7 @@ class DailyAstro:
     weekday_mon0: int  # Monday=0 .. Sunday=6 (core.panchangam's convention)
     chandramana_masa: dict[str, str]  # {"en": ..., "te": ...}
     is_adhika_masa: bool
+    kala_periods: dict[str, list[tuple[datetime, datetime]]]  # exact periods from compute_panchangam
 
 
 def _get_daily_astro(target_date: date, lat: float, lon: float, tz_offset_min: int) -> DailyAstro:
@@ -168,6 +156,10 @@ def _get_daily_astro(target_date: date, lat: float, lon: float, tz_offset_min: i
         sun_rashi_0_11=sun_rashi_0_11, vara_1_7=vara_1_7, weekday_mon0=weekday_mon0,
         chandramana_masa=chandramana["general"]["masa"],
         is_adhika_masa=chandramana["general"]["is_adhika_masa"],
+        kala_periods={
+            key: [(datetime.fromisoformat(pp["start"]), datetime.fromisoformat(pp["end"])) for pp in periods]
+            for key, periods in chandramana["kala_periods"].items()
+        },
     )
 
 
@@ -178,25 +170,11 @@ def _get_rahu_kalam(d: DailyAstro) -> tuple[datetime, datetime]:
 
 
 def _get_durmuhurtam(d: DailyAstro) -> list[tuple[datetime, datetime]]:
-    muhurta_len = (d.sunset - d.sunrise) / 15
-    out = []
-    for i in DUR_MUHURTA_INDICES.get(d.weekday_mon0, [12]):
-        out.append((d.sunrise + muhurta_len * (i - 1), d.sunrise + muhurta_len * i))
-    return out
+    return d.kala_periods["durmuhurta"]
 
 
-def _get_varjyam(d: DailyAstro) -> tuple[datetime, datetime]:
-    nak_start_deg = (d.nakshatra_1_27 - 1) * (360.0 / 27)
-    deg_diff = d.moon_lon - nak_start_deg
-    if deg_diff < 0:
-        deg_diff += 360
-    hours_since_start = deg_diff / 0.549
-    start_jd = d.jd_sunrise - (hours_since_start / 24.0)
-    dt_start_utc = _jd_to_utc_datetime(start_jd)
-    ghatis = VARJYAM_START_GHATIS[d.nakshatra_1_27]
-    varjyam_start = dt_start_utc + timedelta(minutes=ghatis * 24)
-    varjyam_end = varjyam_start + timedelta(minutes=96)
-    return varjyam_start.astimezone(d.tz), varjyam_end.astimezone(d.tz)
+def _get_varjyam(d: DailyAstro) -> list[tuple[datetime, datetime]]:
+    return d.kala_periods["varjyam"]
 
 
 def _subtract_intervals(
@@ -313,19 +291,40 @@ def _check_panchaka_rahitam(tithi_1_15: int, vara_1_7: int, nakshatra_1_27: int,
     return remainder in (3, 5, 7, 0), status
 
 
+def _lagna_at(dt: datetime, lat: float, lon: float) -> int:
+    """Sidereal (Lahiri) ascendant rasi, 1-12, at instant `dt`."""
+    jd = _julian_day_ut(dt.astimezone(timezone.utc))
+    asc_trop = eph.houses(jd, lat, lon, HouseSystem.WHOLE_SIGN).ascmc.ascendant
+    ayanamsa = eph.get_ayanamsa_ut(jd, CalcFlags.SWIEPH)
+    return int(((asc_trop - ayanamsa) % 360.0) / 30) + 1
+
+
 def _get_lagna_windows(d: DailyAstro, lat: float, lon: float) -> list[tuple[datetime, datetime, int]]:
-    """2-hour ascendant (lagna) windows across the day, as (start, end, rasi_1_12)."""
+    """The day's actual lagna spans (00:00 -> 24:00 local), as (start, end,
+    rasi_1_12). Each lagna lasts roughly 1.5-2.5h and its start time shifts
+    every day, so the boundaries are found by scanning in 10-minute steps and
+    bisecting each change down to the second — not fixed 2-hour clock slots."""
+    day_start = datetime.combine(d.target_date, time(0, 0), tzinfo=d.tz)
+    day_end = day_start + timedelta(days=1)
+    step = timedelta(minutes=10)
     windows = []
-    for hour in range(0, 24, 2):
-        w_start = datetime.combine(d.target_date, time(hour, 0), tzinfo=d.tz)
-        w_end = w_start + timedelta(hours=1, minutes=59)
-        jd = _julian_day_ut(w_start.astimezone(timezone.utc))
-        houses_res = eph.houses(jd, lat, lon, HouseSystem.WHOLE_SIGN)
-        asc_trop = houses_res.ascmc.ascendant
-        ayanamsa = eph.get_ayanamsa_ut(jd, CalcFlags.SWIEPH)
-        asc_sidereal = (asc_trop - ayanamsa) % 360.0
-        lagna_1_12 = int(asc_sidereal / 30) + 1
-        windows.append((w_start, w_end, lagna_1_12))
+    w_start, cur_lagna = day_start, _lagna_at(day_start, lat, lon)
+    t = day_start
+    while t < day_end:
+        nxt = min(t + step, day_end)
+        lg = _lagna_at(nxt, lat, lon) if nxt < day_end else cur_lagna
+        if lg != cur_lagna:
+            lo, hi = t, nxt
+            while (hi - lo).total_seconds() > 1:
+                mid = lo + (hi - lo) / 2
+                if _lagna_at(mid, lat, lon) == cur_lagna:
+                    lo = mid
+                else:
+                    hi = mid
+            windows.append((w_start, hi, cur_lagna))
+            w_start, cur_lagna = hi, lg
+        t = nxt
+    windows.append((w_start, day_end, cur_lagna))
     return windows
 
 
@@ -363,6 +362,8 @@ def find_good_muhurtams(
     results: list[dict[str, Any]] = []
     current = start_date
     prev_masa_en: str | None = None
+    # Yesterday's Varjyam can run past midnight into today's early lagnas.
+    prev_varjyam = _get_varjyam(_get_daily_astro(start_date - timedelta(days=1), lat, lon, tz_offset_min))
 
     while current <= end_date:
         d = _get_daily_astro(current, lat, lon, tz_offset_min)
@@ -401,8 +402,7 @@ def find_good_muhurtams(
         if tara_ok and chandra_ok and day_ok and moodam_ok and mahalaya_ok:
             rahu_s, rahu_e = _get_rahu_kalam(d)
             durm = _get_durmuhurtam(d)
-            varj_s, varj_e = _get_varjyam(d)
-            exclusions = [(rahu_s, rahu_e), (varj_s, varj_e)] + durm
+            exclusions = [(rahu_s, rahu_e)] + _get_varjyam(d) + prev_varjyam + durm
 
             windows_out = []
             for w_start, w_end, lagna_1_12 in _get_lagna_windows(d, lat, lon):
@@ -453,12 +453,13 @@ def find_good_muhurtams(
                     "excluded": {
                         "rahu_kalam": f"{_fmt_time(rahu_s)} - {_fmt_time(rahu_e)}",
                         "durmuhurtam": " / ".join(f"{_fmt_time(s)} - {_fmt_time(e)}" for s, e in durm),
-                        "varjyam": f"{_fmt_time(varj_s)} - {_fmt_time(varj_e)}",
+                        "varjyam": " / ".join(f"{_fmt_time(s)} - {_fmt_time(e)}" for s, e in _get_varjyam(d)) or "---",
                     },
                     "windows": windows_out,
                 })
 
         prev_masa_en = d.chandramana_masa["en"]
+        prev_varjyam = _get_varjyam(d)
         current += timedelta(days=1)
 
     return results

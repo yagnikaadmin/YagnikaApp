@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -42,6 +42,8 @@ export default function PriestDashboard() {
   const router = useRouter();
   const { t } = useTranslation();
   const { user, token, logout, updateProfile } = useAuth();
+  // Room for Android's navigation buttons (the app runs edge-to-edge).
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('home');
   const pagerRef = React.useRef<PagerView>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -118,7 +120,7 @@ export default function PriestDashboard() {
         onPageSelected={e => setTab(PRIEST_TABS[e.nativeEvent.position] as Tab)}
       >
         <View key="home" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
             <DeityHero image={GAYATRI_HERO} shloka={t('dashboard.slokaHome')} aspectRatio={4 / 5} />
             <View style={{ padding: 20, gap: 14 }}>
               <Text style={styles.h1}>{t('priest.overview')}</Text>
@@ -154,7 +156,7 @@ export default function PriestDashboard() {
         </View>
 
         <View key="bookings" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
             <DeityHero image={GOVINDA_HERO} shloka={t('dashboard.slokaBookings')} aspectRatio={4 / 5} />
             <View style={{ padding: 20, gap: 12 }}>
               <View style={styles.segment}>
@@ -233,7 +235,7 @@ export default function PriestDashboard() {
         </View>
 
         <View key="profile" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
             <DeityHero image={LAKSHMI_HERO} shloka={t('dashboard.slokaProfile')} aspectRatio={4 / 5} />
             <View style={{ padding: 20, gap: 16 }}>
               <Text style={styles.h1}>{t('dashboard.myProfile')}</Text>
@@ -265,7 +267,7 @@ export default function PriestDashboard() {
       </PagerView>
       </ZoomView>
 
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { height: 78 + insets.bottom, paddingBottom: 14 + insets.bottom }]}>
         {([
           { key: 'home', label: t('customer.tabHome'), icon: 'home' as const },
           { key: 'bookings', label: t('customer.tabBookings'), icon: 'clipboard' as const },

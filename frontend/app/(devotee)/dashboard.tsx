@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, TextInput } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -39,6 +39,8 @@ export default function DevoteeDashboard() {
   const router = useRouter();
   const { t } = useTranslation();
   const { user, token, logout, updateProfile } = useAuth();
+  // Room for Android's navigation buttons (the app runs edge-to-edge).
+  const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<'home' | 'categories' | 'bookings' | 'panchangam' | 'profile'>('home');
   const [poojas, setPoojas] = useState<Pooja[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -153,7 +155,7 @@ export default function DevoteeDashboard() {
         }}
       >
         <View key="home" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
           <View>
             <DeityHero image={GAYATRI_HERO} shloka={t('dashboard.slokaHome')} aspectRatio={4 / 5} />
 
@@ -200,7 +202,7 @@ export default function DevoteeDashboard() {
         </View>
 
         <View key="categories" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
           <View style={{ paddingTop: 12 }}>
             <View style={styles.searchWrap}>
               <Ionicons name="search" size={16} color={colors.gray400} />
@@ -264,7 +266,7 @@ export default function DevoteeDashboard() {
         </View>
 
         <View key="bookings" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
           <DeityHero image={GOVINDA_HERO} shloka={t('dashboard.slokaBookings')} aspectRatio={4 / 5} />
           <View style={{ padding: 20 }}>
             <Text style={styles.pageTitle}>{t('customer.myBookings')}</Text>
@@ -285,7 +287,7 @@ export default function DevoteeDashboard() {
         </View>
 
         <View key="profile" style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ paddingBottom: 110 }} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 110 + insets.bottom }} showsVerticalScrollIndicator={false}>
           <DeityHero image={LAKSHMI_HERO} shloka={t('dashboard.slokaProfile')} aspectRatio={4 / 5} />
           <View style={{ padding: 20, gap: 16 }}>
             <Text style={styles.pageTitle}>{t('customer.yajmanaProfile')}</Text>
@@ -318,7 +320,7 @@ export default function DevoteeDashboard() {
       </PagerView>
       </ZoomView>
 
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { height: 78 + insets.bottom, paddingBottom: 14 + insets.bottom }]}>
         {[
           { key: 'home', label: t('customer.tabHome'), icon: 'home' as const },
           { key: 'categories', label: t('customer.tabCategories'), icon: 'grid' as const },

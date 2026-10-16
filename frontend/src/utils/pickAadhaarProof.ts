@@ -12,7 +12,13 @@ const ALLOWED = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
 
 // Lets the priest pick their Aadhaar proof as a JPEG / PNG / PDF, enforces
 // the 2 MB cap, and returns a base64 data URI ready to send to the backend.
-export async function pickAadhaarProof(): Promise<AadhaarProof | null> {
+export function pickAadhaarProof(): Promise<AadhaarProof | null> {
+  return pickProofDocument('aadhaar-proof');
+}
+
+// Same rules for any uploaded proof document (e.g. the Agama certificate).
+// `fallbackName` is used when the picker doesn't report a file name.
+export async function pickProofDocument(fallbackName: string): Promise<AadhaarProof | null> {
   const res = await DocumentPicker.getDocumentAsync({
     type: ['image/jpeg', 'image/png', 'application/pdf'],
     copyToCacheDirectory: true,
@@ -62,7 +68,7 @@ export async function pickAadhaarProof(): Promise<AadhaarProof | null> {
 
   return {
     dataUri,
-    name: asset.name || 'aadhaar-proof',
+    name: asset.name || fallbackName,
     mimeType: resolvedMime,
     sizeKB: Math.round((blob.size || asset.size || 0) / 1024),
   };

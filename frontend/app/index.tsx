@@ -1,13 +1,10 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ImageBackground } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, ImageBackground } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { colors, radius } from '@/src/theme';
 import { useAuth } from '@/src/context/AuthContext';
-import LanguagePicker from '@/src/components/LanguagePicker';
 
 // Opening / intro screen — shown every time the app is opened.
 //
@@ -39,6 +36,9 @@ const EXPECTED_ROLE = FLAVOR === 'customer' ? 'devotee' : 'priest';
 
 // Both builds open straight to their login screen (registration is one tap
 // away). Admin has no screen in the app — it lives only on the Admin Web UI.
+// How long the opening screen shows before moving on by itself.
+const SPLASH_MS = 1500;
+
 const LOGIN_DEST = FLAVOR === 'customer' ? '/login?role=devotee' : '/login?role=priest';
 
 function destForUser(u: { role?: string; approval_status?: string | null } | null): string {
@@ -54,21 +54,18 @@ export default function Splash() {
   const { t } = useTranslation();
   const { user, isLoading, logout } = useAuth();
 
-  // A session belonging to the other flavor's role — drop it.
+  // Shown briefly, then moves on by itself: to the dashboard when a session of
+  // this flavor's role exists, otherwise to login. A session belonging to the
+  // other flavor's role is dropped first (this effect then re-runs with no user).
   useEffect(() => {
-    if (!isLoading && user && user.role !== EXPECTED_ROLE) {
+    if (isLoading) return;
+    if (user && user.role !== EXPECTED_ROLE) {
       logout();
+      return;
     }
-  }, [isLoading, user, logout]);
-
-  useEffect(() => {
-    if (!isLoading && user && user.role === EXPECTED_ROLE) {
-      const timer = setTimeout(() => router.replace(destForUser(user) as any), 900);
-      return () => clearTimeout(timer);
-    }
-  }, [isLoading, user, router]);
-
-  const onEnter = () => router.replace(destForUser(user) as any);
+    const timer = setTimeout(() => router.replace(destForUser(user) as any), SPLASH_MS);
+    return () => clearTimeout(timer);
+  }, [isLoading, user, logout, router]);
 
   return (
     <View style={styles.root} testID="splash-screen">
@@ -82,10 +79,6 @@ export default function Splash() {
           style={StyleSheet.absoluteFill}
         />
       </ImageBackground>
-
-      <SafeAreaView edges={['top']} style={styles.topBar}>
-        <LanguagePicker tint="#FDE68A" />
-      </SafeAreaView>
 
       <View style={styles.centerBlock}>
         <View style={styles.logoCircle}>
@@ -101,18 +94,6 @@ export default function Splash() {
           <Text style={styles.mantra}>धर्मो रक्षति रक्षितः</Text>
           <Text style={styles.diamond}>♦</Text>
         </View>
-
-        <Pressable
-          testID="splash-enter-btn"
-          style={({ pressed }) => [styles.cta, pressed && { opacity: 0.9 }]}
-          onPress={onEnter}
-        >
-          <Text style={styles.ctaText}>{t('splash.enter')}</Text>
-        </Pressable>
-
-        <Text style={styles.hint}>
-          {user ? t('splash.hintContinue') : t('splash.hintRegister')}
-        </Text>
       </View>
     </View>
   );
@@ -138,13 +119,4 @@ const styles = StyleSheet.create({
   mantraRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 24 },
   diamond: { color: '#F59E0B', fontSize: 12 },
   mantra: { color: '#D1D5DB', fontSize: 14, fontWeight: '600' },
-  cta: {
-    width: '100%', paddingVertical: 18, borderRadius: radius.lg,
-    backgroundColor: colors.darkRed, borderWidth: 2, borderColor: '#B8860B',
-    alignItems: 'center',
-    shadowColor: colors.darkRed, shadowOpacity: 0.4, shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  ctaText: { color: '#FFF', fontSize: 22, fontWeight: '800', letterSpacing: 3 },
-  hint: { color: '#D1D5DB', fontSize: 12, marginTop: 16, letterSpacing: 1 },
 });

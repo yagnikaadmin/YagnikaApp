@@ -22,7 +22,9 @@ export interface Panchangam {
   solar: { sunrise: string; sunset: string; solar_noon?: string };
   lunar: { moonrise: string; moonset: string; moon_illumination?: number };
   general: Record<string, Loc>;
-  kalas: Record<string, string>;   // id -> "4:30 AM – 5:16 AM" (may be "a – b / c – d")
+  kalas: Record<string, string>;   // id -> "4:30 AM – 5:16 AM" (may be "a – b / c – d", or "---")
+  // id -> exact periods as local ISO timestamps (same order as `kalas`).
+  kala_periods?: Record<string, { start: string; end: string }[]>;
   extended?: {
     graha_positions?: Record<string, any>;
     lagna?: { rashi: Loc; degree: number };
@@ -174,11 +176,36 @@ export const KALA_NAMES: Record<KalaId, Loc> = {
   varjyam: { en: 'Varjyam', te: 'వర్జ్యం', hi: 'वर्ज्यम्', ta: 'வர்ஜ்யம்', kn: 'ವರ್ಜ್ಯ', ml: 'വർജ്യം' },
 };
 
-export interface KalaEntry { id: KalaId; name: Loc; time: string }
+export interface KalaPeriod { start: Date; end: Date }
+
+// `time` is for display ("(+1)" marks a period that runs into or starts on the
+// next calendar day); `periods` are the exact instants, used for the
+// "current kala" highlight and its countdown.
+export interface KalaEntry { id: KalaId; name: Loc; time: string; periods?: KalaPeriod[] }
 
 export function getSpecialKalas(p?: Panchangam | null): KalaEntry[] {
   const k = p?.kalas || {};
-  return KALA_ORDER.map((id) => ({ id, name: KALA_NAMES[id], time: k[id] || '---' }));
+  const exact = p?.kala_periods;
+  // Viewed day as YYYY-MM-DD, from the panchang's "DD/MM/YYYY".
+  const [dd, mm, yyyy] = (p?.date || '').split('/');
+  const viewedIso = yyyy ? `${yyyy}-${mm}-${dd}` : '';
+  return KALA_ORDER.map((id) => {
+    const text = k[id] || '---';
+    const raw = exact?.[id];
+    if (!raw) return { id, name: KALA_NAMES[id], time: text };
+    const segments = text === '---' ? [] : text.split(' / ');
+    const time = segments.length
+      ? segments.map((seg, i) => {
+          // ISO strings carry the location's local date, e.g. "2026-01-11T00:30:00+05:30".
+          const nextDay = !!viewedIso && !!raw[i] && raw[i].end.slice(0, 10) > viewedIso;
+          return nextDay ? `${seg} (+1)` : seg;
+        }).join(' / ')
+      : '---';
+    return {
+      id, name: KALA_NAMES[id], time,
+      periods: raw.map((r) => ({ start: new Date(r.start), end: new Date(r.end) })),
+    };
+  });
 }
 
 /* ---------------- time helpers ---------------- */
@@ -217,21 +244,38 @@ export function splitPeriods(time: string): { start: string; end: string }[] {
   }).filter(Boolean) as { start: string; end: string }[];
 }
 
-export function activeKala(kalas: KalaEntry[], now: Date, isToday: boolean): { kala: KalaEntry; end: string } | null {
-  if (!isToday) return null;
+// The kala running at `now`. With exact periods this is date-aware, so a
+// period that is really on the next day (e.g. a 12:30 AM Varjyam that belongs
+// to the following night) is never mistaken for one happening this morning.
+// Without them (older backend) it falls back to clock times, today only.
+export function activeKala(kalas: KalaEntry[], now: Date, isToday: boolean): { kala: KalaEntry; end: Date } | null {
+  const t = now.getTime();
   for (const k of kalas) {
+    if (k.periods) {
+      const hit = k.periods.find((p) => t >= p.start.getTime() && t < p.end.getTime());
+      if (hit) return { kala: k, end: hit.end };
+      continue;
+    }
+    if (!isToday) continue;
     for (const p of splitPeriods(k.time)) {
-      if (inRange(now, p.start, p.end)) return { kala: k, end: p.end };
+      if (inRange(now, p.start, p.end)) {
+        const end = parseClock(p.end);
+        if (end) {
+          if (end < now) end.setDate(end.getDate() + 1);
+          return { kala: k, end };
+        }
+      }
     }
   }
   return null;
 }
 
-export function countdown(now: Date, endStr: string): string {
-  const end = parseClock(endStr);
-  if (!end) return '';
-  let ms = end.getTime() - now.getTime();
-  if (ms < 0) ms += 86400000;
+export function countdown(now: Date, end: Date | string): string {
+  const endAt = typeof end === 'string' ? parseClock(end) : end;
+  if (!endAt) return '';
+  let ms = endAt.getTime() - now.getTime();
+  if (ms < 0 && typeof end === 'string') ms += 86400000;
+  if (ms < 0) ms = 0;
   const s = Math.floor(ms / 1000);
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;

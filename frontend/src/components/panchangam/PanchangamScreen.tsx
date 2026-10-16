@@ -5,12 +5,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, Modal, ActivityIndicator,
-  StyleSheet, TextInput, RefreshControl, Platform,
+  StyleSheet, TextInput, RefreshControl, Platform, useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius } from '@/src/theme';
 import MiniCalendar from '@/src/components/MiniCalendar';
 import KalaChakra from '@/src/components/panchangam/KalaChakra';
@@ -57,11 +58,18 @@ export default function PanchangamScreen() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language || 'en';
   const P = useCallback((v: any) => pickLoc(v, lang), [lang]);
+  // Keeps the last card clear of the dashboard tab bar, which grows by this inset.
+  const insets = useSafeAreaInsets();
+  // Kala Chakra size follows the web app on phones: 85% of the screen width, at most 450.
+  const { width: screenW } = useWindowDimensions();
+  const wheelSize = Math.round(Math.min(screenW * 0.85, 450));
 
   const [dateIso, setDateIso] = useState(todayIso);
   const [coords, setCoords] = useState<Coords>(DEFAULT_CITY);
   const [data, setData] = useState<Panchangam | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Data shown is for `loadedKey`; while it differs from the requested day and
+  // place, the screen is loading.
+  const [loadedKey, setLoadedKey] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [now, setNow] = useState(() => new Date());
@@ -69,12 +77,22 @@ export default function PanchangamScreen() {
   const [sheet, setSheet] = useState<null | 'detail' | 'muhurtam' | 'kundali' | 'festivals' | 'date' | 'location'>(null);
 
   const load = useCallback(async (iso: string, c: Coords) => {
-    setErr('');
-    try { setData(await fetchPanchangam(iso, c)); }
+    try { setData(await fetchPanchangam(iso, c)); setErr(''); }
     catch (e: any) { setErr(e?.message || 'Failed to load panchangam'); }
   }, []);
 
-  useEffect(() => { setLoading(true); load(dateIso, coords).finally(() => setLoading(false)); }, [dateIso, coords, load]);
+  const requestKey = `${dateIso}|${coords.latitude},${coords.longitude}`;
+  const loading = loadedKey !== requestKey;
+  // State is only updated when the response arrives, and only for the latest
+  // request: switching days quickly can't let an older response overwrite it.
+  useEffect(() => {
+    let alive = true;
+    fetchPanchangam(dateIso, coords)
+      .then((d) => { if (alive) { setData(d); setErr(''); } })
+      .catch((e: any) => { if (alive) setErr(e?.message || 'Failed to load panchangam'); })
+      .finally(() => { if (alive) setLoadedKey(requestKey); });
+    return () => { alive = false; };
+  }, [dateIso, coords, requestKey]);
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id); }, []);
 
   const onRefresh = useCallback(async () => { setRefreshing(true); await load(dateIso, coords); setRefreshing(false); }, [dateIso, coords, load]);
@@ -85,8 +103,6 @@ export default function PanchangamScreen() {
   const active = useMemo(() => activeKala(kalas, now, isToday), [kalas, now, isToday]);
   const phase = useMemo(() => greetingKey(data, now), [data, now]);
   const g = data?.general;
-
-  const shiftDay = (delta: number) => { const d = parseIso(dateIso); d.setDate(d.getDate() + delta); setDateIso(isoOf(d)); };
 
   const then = t('panchangam.then');
   const pcgList = g ? [
@@ -131,7 +147,7 @@ export default function PanchangamScreen() {
       ) : (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: 130 }}
+          contentContainerStyle={{ paddingBottom: 130 + insets.bottom }}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={M} />}
         >
@@ -208,7 +224,7 @@ export default function PanchangamScreen() {
           {/* kala chakra */}
           <Text style={styles.kalaHeading}>〜 {t('panchangam.kalaChakra')} 〜</Text>
           <View style={{ alignItems: 'center', marginTop: 2 }}>
-            <KalaChakra kalas={kalas} refDate={refDate} activeId={active?.kala.id} lang={lang} size={320} />
+            <KalaChakra kalas={kalas} refDate={refDate} activeId={active?.kala.id} lang={lang} size={wheelSize} />
           </View>
 
           {active ? (
@@ -554,7 +570,7 @@ function MuhurtamBody({ P, t, lang, initialCoords }: any) {
       </View>
       {showCal ? (
         <MiniCalendar mode="single" value={showCal === 'start' ? start : end} min={showCal === 'end' ? start : undefined}
-          onChange={(v: string) => { showCal === 'start' ? setStart(v) : setEnd(v); setShowCal(null); }} />
+          onChange={(v: string) => { if (showCal === 'start') setStart(v); else setEnd(v); setShowCal(null); }} />
       ) : null}
       <Pressable style={styles.primaryBtn} onPress={run} disabled={loading}>
         <Text style={styles.primaryBtnText}>{loading ? t('panchangam.checking') : t('panchangam.findGoodMuhurtams')}</Text>
@@ -733,13 +749,13 @@ function FestivalsBody({ P, t, year, coords }: any) {
   const flat = list.flatMap((f) => (f.dates || []).map((d) => ({ ...f, date: d })));
   flat.sort((a, b) => a.date.localeCompare(b.date));
   const today = todayIso();
-  let lastMonth = '';
+  const monthOf = (iso: string) => parseIso(iso).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   return (
     <View>
       {flat.map((it, i) => {
         const d = parseIso(it.date);
-        const mk = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-        const showMonth = mk !== lastMonth; lastMonth = mk;
+        const mk = monthOf(it.date);
+        const showMonth = i === 0 || mk !== monthOf(flat[i - 1].date);
         return (
           <View key={`${i}-${it.date}`}>
             {showMonth ? <Text style={styles.festMonth}>{mk}</Text> : null}
