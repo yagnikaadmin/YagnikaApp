@@ -12,11 +12,25 @@ Before you start:
 - Run the backend with `ENVIRONMENT=development` in `backend/.env` (the default is `production`, which omits `reset_token` from the forgot-password response — section 4 needs it). The token is also always printed in the server log.
 - Use a throwaway database. Emails are unique per `(email, role)`, so re-running these recipes against the same DB returns 400 on registration — change the emails or drop the DB.
 - Rate limits are in-memory per client IP (login 10 / 5 min, register 50 / h, forgot-password 5 / h). Restart the server to reset them.
-- Login and forgot-password require a `role` (`devotee` | `priest` | `admin`).
-- Priest registration requires the full profile. The shared mandatory fields are kept in `$PRIEST_FIELDS` below.
+- Devotee/priest login and forgot-password require a `role` (`devotee` | `priest`). The admin signs in separately with a **username** via `POST /api/admin/login`, using `ADMIN_USERNAME` / `ADMIN_PASSWORD` from `backend/.env`.
+- Priest registration requires the full profile, including an Aadhaar proof (a JPEG/PNG/PDF data URI) and a valid Indian mobile number. The shared mandatory fields are kept in `$PRIEST_FIELDS` below.
+- `services` must include at least one catalog service from a main (non-Dana) category. The demo poojas `p1`–`p10` alone are rejected, so every priest below also offers `sc-1-1` (Suprabhata Seva).
+- **New priests are inactive until an admin approves them**, so every gated priest call returns 401 until then. Use `approve_priest` below.
 
 ```bash
-PRIEST_FIELDS='"aadhaar_number":"123412341234","date_of_birth":"1980-01-15","sampradaya":"Smarta","agama":"Vaikhanasa","veda":"Yajur Veda","shakha":"Taittiriya","sutra":"Apastamba","gotra":"Bharadwaja","pravara":"Angirasa, Barhaspatya, Bharadwaja","years_of_experience":10,"languages":["Sanskrit","Telugu"],"priest_type":"independent"'
+PRIEST_FIELDS='"aadhaar_number":"123412341234","aadhaar_proof":"data:image/png;base64,iVBORw0KGgo=","aadhaar_proof_name":"aadhaar.png","date_of_birth":"1980-01-15","sampradaya":"Smarta","agama":"Vaikhanasa","years_of_experience":10,"languages":["Sanskrit","Telugu"],"priest_type":"independent"'
+
+# Admin token (username/password from backend/.env)
+ATOKEN=$(curl -s -X POST $URL/api/admin/login -H "Content-Type: application/json" \
+  -d '{"username":"<ADMIN_USERNAME>","password":"<ADMIN_PASSWORD>"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# approve_priest <user_id>: find the priest's pending registration and approve it
+approve_priest() {
+  REG_ID=$(curl -s -H "Authorization: Bearer $ATOKEN" "$URL/api/admin/priest-registrations?status=pending" \
+    | python3 -c "import sys,json;print(next(r['id'] for r in json.load(sys.stdin) if r['user_id']=='$1'))")
+  curl -s -X POST $URL/api/admin/priest-registrations/$REG_ID/approve -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $ATOKEN" -d '{"note":"ok"}'; echo
+}
 ```
 
 ## 1. Full booking lifecycle (2 priests, 1 devotee)
@@ -24,11 +38,15 @@ PRIEST_FIELDS='"aadhaar_number":"123412341234","date_of_birth":"1980-01-15","sam
 ```bash
 # Register two priests (both offer pooja p1)
 P1=$(curl -s -X POST $URL/api/auth/register-priest -H "Content-Type: application/json" \
-  -d '{"name":"Pandit A","email":"pa@t.com","mobile":"+91 91111 11111","password":"Test@123","address":"Chennai","services":["p1","p2"],'"$PRIEST_FIELDS"'}')
+  -d '{"name":"Pandit A","email":"pa@t.com","mobile":"+91 91111 11111","password":"Test@123","address":"Chennai","services":["p1","p2","sc-1-1"],'"$PRIEST_FIELDS"'}')
 P1_TOKEN=$(echo $P1 | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 P2=$(curl -s -X POST $URL/api/auth/register-priest -H "Content-Type: application/json" \
-  -d '{"name":"Pandit B","email":"pb@t.com","mobile":"+91 92222 22222","password":"Test@123","address":"Bangalore","services":["p1","p4"],'"$PRIEST_FIELDS"'}')
+  -d '{"name":"Pandit B","email":"pb@t.com","mobile":"+91 92222 22222","password":"Test@123","address":"Bangalore","services":["p1","p4","sc-1-1"],'"$PRIEST_FIELDS"'}')
 P2_TOKEN=$(echo $P2 | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# Both start pending (approval_status "pending", inactive) — approve them
+approve_priest $(echo $P1 | python3 -c "import sys,json;print(json.load(sys.stdin)['user']['id'])")
+approve_priest $(echo $P2 | python3 -c "import sys,json;print(json.load(sys.stdin)['user']['id'])")
 
 # Register devotee
 D=$(curl -s -X POST $URL/api/auth/register -H "Content-Type: application/json" \
@@ -59,7 +77,7 @@ curl -s -H "Authorization: Bearer $D_TOKEN" $URL/api/bookings/mine | python3 -c 
 curl -s -X POST $URL/api/bookings/$BID/complete -H "Authorization: Bearer $P1_TOKEN" | python3 -c "import sys,json;print('final status:',json.load(sys.stdin)['status'])"
 ```
 
-## 2. Availability conflict
+## 2. Time-slot conflict
 
 ```bash
 # After the above, priest A has a Completed p1 booking at 08:00 (p1 lasts 2 hours → 08:00–10:00).
@@ -70,7 +88,7 @@ curl -s -X POST $URL/api/bookings -H "Content-Type: application/json" -H "Author
 # Expected: eligible=1
 ```
 
-Overlap uses each pooja's own `duration` (unparseable or empty durations fall back to 120 minutes). A priest who is `busy` (has an accepted, not-yet-completed booking) is excluded from every new booking regardless of time.
+Overlap uses each pooja's own `duration` (unparseable or empty durations fall back to 120 minutes). A priest who is `busy` (has an accepted, not-yet-completed booking) is excluded from every new booking regardless of time. The priest's availability schedule (`/api/priest/availability…`) is **not** consulted when choosing eligible priests.
 
 ## 3. No priests available
 
@@ -97,9 +115,15 @@ Reset tokens expire after 30 minutes and are single-use. Unknown emails and the 
 
 ## 5. Admin operations
 
+The same operations are available in the Admin Web UI at `$URL/admin` (served by the backend).
+
 ```bash
-ATOKEN=$(curl -s -X POST $URL/api/auth/login -H "Content-Type: application/json" \
-  -d '{"email":"admin@yagnika.com","password":"Admin@123","role":"admin"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+# $ATOKEN comes from the setup block at the top (POST /api/admin/login)
+
+# Priest registration review: submitted -> interview -> approved | rejected
+curl -s -H "Authorization: Bearer $ATOKEN" "$URL/api/admin/priest-registrations?status=pending"
+# curl -s -X POST $URL/api/admin/priest-registrations/<reg_id>/stage  -H "Content-Type: application/json" -H "Authorization: Bearer $ATOKEN" -d '{"stage":"interview"}'
+# curl -s -X POST $URL/api/admin/priest-registrations/<reg_id>/reject -H "Content-Type: application/json" -H "Authorization: Bearer $ATOKEN" -d '{"note":"reason"}'
 
 # Stats
 curl -s -H "Authorization: Bearer $ATOKEN" $URL/api/admin/stats
@@ -123,7 +147,7 @@ DEV_ID=$(curl -s -H "Authorization: Bearer $ATOKEN" $URL/api/admin/devotees | py
   -d '{"is_active":false}' | python3 -c "import sys,json;print('active:',json.load(sys.stdin)['is_active'])"
 ```
 
-Note: admin edits to the seeded service catalog (`svc-*` poojas) are reset on every server restart; edits to `p1`–`p10` and admin-created poojas persist.
+Note: the seeded service catalog (`sc-*` poojas) is rebuilt from `SERVICE_CATALOG` on every server restart, so admin edits to it are reset; edits to `p1`–`p10` and admin-created poojas persist.
 
 ## 6. Authorization / negative cases
 
@@ -148,9 +172,10 @@ curl -s -o /dev/null -w "wrong-role login: %{http_code}\n" -X POST $URL/api/auth
 
 ## Automated suite
 
-The same scenarios (plus race, dual-role, busy-state and rate-limit cases) are in `backend/tests/test_scenarios.py`:
+The same scenarios (plus race, dual-role, busy-state, priest-approval and rate-limit cases) are in `backend/tests/test_scenarios.py`. It reads the admin credentials from `ADMIN_USERNAME` / `ADMIN_PASSWORD` (environment or `backend/.env`):
 
 ```bash
 cd backend
 pytest tests/test_scenarios.py -v          # server running on :8001; restart it between full runs (rate limits)
+pytest tests/test_panchangam.py -v         # pure calculation tests — no server or database needed
 ```

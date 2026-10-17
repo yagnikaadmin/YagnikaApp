@@ -6,14 +6,21 @@ create real users, poojas, and bookings.
 
     uvicorn server:app --host 0.0.0.0 --port 8001   # in one terminal
     pytest tests/test_scenarios.py -v                # in another
+
+Admin credentials are read from ADMIN_USERNAME / ADMIN_PASSWORD in the
+environment, falling back to backend/.env (the same values the server
+seeds the admin account from).
 """
+import functools
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 import requests
+from dotenv import dotenv_values
 
 BASE_URL = os.environ.get("YAGNIKA_TEST_BASE_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
@@ -21,8 +28,14 @@ API = f"{BASE_URL}/api"
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()
 
+_DOTENV = dotenv_values(Path(__file__).resolve().parent.parent / ".env")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME") or _DOTENV.get("ADMIN_USERNAME") or ""
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD") or _DOTENV.get("ADMIN_PASSWORD") or ""
+# The seeded admin keeps this email for the (email, role) unique index.
 ADMIN_EMAIL = "admin@yagnika.com"
-ADMIN_PASSWORD = "Admin@123"
+DANA_CATEGORY = "Danas (Accepted Ritual Offerings)"
+# Smallest valid Aadhaar-proof data URI (the server only checks the prefix and size).
+AADHAAR_PROOF = "data:image/png;base64,iVBORw0KGgo="
 
 
 def unique_email(prefix: str) -> str:
@@ -50,11 +63,38 @@ def poojas(session):
     return {p["id"]: p for p in data}
 
 
-@pytest.fixture(scope="session")
-def admin_token(session):
-    r = session.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "role": "admin"}, timeout=10)
+@functools.lru_cache(maxsize=None)
+def get_admin_token() -> str:
+    # Cached: admin sign-in shares the login rate-limit bucket (10 per 5 min).
+    assert ADMIN_USERNAME and ADMIN_PASSWORD, "set ADMIN_USERNAME / ADMIN_PASSWORD (env or backend/.env)"
+    r = requests.post(f"{API}/admin/login", json={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}, timeout=10)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+def admin_token():
+    return get_admin_token()
+
+
+@functools.lru_cache(maxsize=None)
+def main_catalog_service() -> str:
+    """A catalog service from a non-Dana category. Priest registration requires
+    at least one, so every test priest offers it alongside the test's poojas."""
+    rows = requests.get(f"{API}/poojas", timeout=10).json()
+    for p in rows:
+        if p.get("category") and p["category"] != DANA_CATEGORY:
+            return p["id"]
+    raise AssertionError("no main-category catalog service seeded")
+
+
+def approve_priest(user_id: str, admin_token: str) -> None:
+    regs = requests.get(f"{API}/admin/priest-registrations?status=pending",
+                        headers=auth_headers(admin_token), timeout=10).json()
+    reg = next(r for r in regs if r["user_id"] == user_id)
+    r = requests.post(f"{API}/admin/priest-registrations/{reg['id']}/approve", json={"note": "test"},
+                      headers=auth_headers(admin_token), timeout=10)
+    assert r.status_code == 200, r.text
 
 
 def register_devotee(session, name="Test Devotee"):
@@ -66,21 +106,26 @@ def register_devotee(session, name="Test Devotee"):
 
 
 def priest_payload(email, services, name="Test Priest", mobile="9111111111", password="password123"):
-    # Mirrors the mandatory fields of PriestRegister in server.py.
+    # Mirrors the mandatory fields of PriestRegister / register_priest in server.py.
     return {
         "name": name, "email": email, "mobile": mobile, "password": password,
-        "address": "123 Test Street", "latitude": 17.4, "longitude": 78.5, "services": services,
-        "aadhaar_number": "123412341234", "date_of_birth": "1980-01-15",
-        "sampradaya": "Smarta", "agama": "Vaikhanasa", "veda": "Yajur Veda", "shakha": "Taittiriya",
-        "sutra": "Apastamba", "gotra": "Bharadwaja", "pravara": "Angirasa, Barhaspatya, Bharadwaja",
+        "address": "123 Test Street", "latitude": 17.4, "longitude": 78.5,
+        "services": list(services) + [main_catalog_service()],
+        "aadhaar_number": "123412341234", "aadhaar_proof": AADHAAR_PROOF, "aadhaar_proof_name": "aadhaar.png",
+        "date_of_birth": "1980-01-15", "sampradaya": "Smarta", "agama": "Vaikhanasa",
         "years_of_experience": 10, "languages": ["Sanskrit", "Telugu"], "priest_type": "independent",
     }
 
 
-def register_priest(session, services, name="Test Priest"):
+def register_priest(session, services, name="Test Priest", approve=True):
+    """Registers a priest and (by default) approves them via the admin API —
+    new priests are inactive until approved."""
     r = session.post(f"{API}/auth/register-priest", json=priest_payload(unique_email("priest"), services, name=name), timeout=10)
     assert r.status_code == 200, r.text
-    return r.json()
+    data = r.json()
+    if approve:
+        approve_priest(data["user"]["id"], get_admin_token())
+    return data
 
 
 class TestRegistrationAndAuth:
@@ -432,6 +477,46 @@ class TestPriestBusyState:
         # must still be rejected.
         accept2 = session.post(f"{API}/bookings/{b2['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10)
         assert accept2.status_code == 409
+
+
+class TestPriestApproval:
+    def test_new_priest_is_pending_until_approved(self, session, admin_token):
+        priest = register_priest(session, [], approve=False)
+        assert priest["user"]["approval_status"] == "pending"
+        token = priest["access_token"]
+
+        # The token works for the pending screen only; gated endpoints reject it.
+        reg = session.get(f"{API}/priest/my-registration", headers=auth_headers(token), timeout=10)
+        assert reg.status_code == 200
+        assert reg.json()["stage"] == "submitted"
+        assert session.get(f"{API}/bookings/priest/inbox", headers=auth_headers(token), timeout=10).status_code == 401
+
+        # Login while pending still succeeds (so the app can show the pending screen).
+        login = session.post(f"{API}/auth/login", json={"email": priest["user"]["email"], "password": "password123", "role": "priest"}, timeout=10)
+        assert login.status_code == 200
+        assert login.json()["user"]["approval_status"] == "pending"
+
+        approve_priest(priest["user"]["id"], admin_token)
+        assert session.get(f"{API}/bookings/priest/inbox", headers=auth_headers(token), timeout=10).status_code == 200
+        assert session.get(f"{API}/priest/my-registration", headers=auth_headers(token), timeout=10).json()["stage"] == "approved"
+
+    def test_rejected_priest_cannot_log_in(self, session, admin_token):
+        priest = register_priest(session, [], approve=False)
+        regs = session.get(f"{API}/admin/priest-registrations?status=pending", headers=auth_headers(admin_token), timeout=10).json()
+        reg = next(r for r in regs if r["user_id"] == priest["user"]["id"])
+        r = session.post(f"{API}/admin/priest-registrations/{reg['id']}/reject", json={"note": "test"},
+                         headers=auth_headers(admin_token), timeout=10)
+        assert r.status_code == 200
+        login = session.post(f"{API}/auth/login", json={"email": priest["user"]["email"], "password": "password123", "role": "priest"}, timeout=10)
+        assert login.status_code == 403
+
+    def test_dana_only_registration_rejected(self, session):
+        rows = session.get(f"{API}/poojas", timeout=10).json()
+        dana = next(p["id"] for p in rows if p.get("category") == DANA_CATEGORY)
+        payload = priest_payload(unique_email("dana"), [])
+        payload["services"] = [dana]
+        r = session.post(f"{API}/auth/register-priest", json=payload, timeout=10)
+        assert r.status_code == 400
 
 
 class TestRateLimiting:
