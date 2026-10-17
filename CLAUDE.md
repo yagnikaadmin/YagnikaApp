@@ -58,7 +58,7 @@ Code flows **`dev` → `test` → `prod`**, and `main` mirrors `prod`.
 
 | Branch | Role | How it changes |
 |---|---|---|
-| `dev` | integration branch; all work starts here | commits or feature branches off `dev`, merged back into `dev` |
+| `dev` | integration branch and GitHub default branch; all work starts here | commits or feature branches off `dev`, merged back into `dev` |
 | `test` | QA / pre-release | only by merging `dev` → `test` |
 | `prod` | released code | only by merging `test` → `prod` |
 | `main` | mirror of `prod` (kept so existing links/clones work) | only by merging `prod` → `main` after a release; no direct commits |
