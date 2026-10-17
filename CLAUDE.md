@@ -52,6 +52,21 @@ npx tsc --noEmit                    # strict type-check; `expo start` generates 
 - **No frontend test suite.**
 - **Native builds**: per `INTEGRATION.md`, these go through Emergent's Publish → Build flow, not the EAS CLI. Ask before `eas build` / `eas submit`.
 
+## Branches and workflow
+
+Code flows **`dev` → `test` → `prod`**, and `main` mirrors `prod`.
+
+| Branch | Role | How it changes |
+|---|---|---|
+| `dev` | integration branch; all work starts here | commits or feature branches off `dev`, merged back into `dev` |
+| `test` | QA / pre-release | only by merging `dev` → `test` |
+| `prod` | released code | only by merging `test` → `prod` |
+| `main` | mirror of `prod` (kept so existing links/clones work) | only by merging `prod` → `main` after a release; no direct commits |
+
+- **Start of work**: `git checkout dev && git pull`. Commit and push to `dev`, or to a feature branch off `dev`.
+- **Promotion**: never commit to `test`, `prod` or `main` directly, and never merge between them (promote a release) unless the user explicitly asks for that step. Promotion and pushes to these branches publish code to QA or production.
+- **Protection**: branch protection is not configured on GitHub yet, so nothing enforces these rules. Follow them anyway.
+
 ## Working on a production app
 
 - **Real users and data exist.** Never point `test_scenarios.py` or the `TESTING.md` recipes at a non-throwaway database.
