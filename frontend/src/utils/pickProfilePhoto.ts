@@ -3,7 +3,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 // Picks a photo from the gallery, downsizes/compresses it, and returns a
 // small JPEG data URI ready to send straight to the backend and to render
-// immediately (no upload step / no image hosting infra needed for this POC).
+// immediately (no upload step / no image hosting infra needed yet).
 export async function pickProfilePhoto(): Promise<string | null> {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) throw new Error('Photo library permission denied. Enable it in Settings to add a profile photo.');

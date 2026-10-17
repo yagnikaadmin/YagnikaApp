@@ -1,4 +1,4 @@
-# Yagnika PoC Test Credentials
+# Yagnika Test Credentials
 
 ## Admin (default, cannot be modified)
 - Email: admin@yagnika.com
@@ -12,7 +12,7 @@ Create a test devotee via the "Register as Devotee" flow.
 
 ## Forgot Password
 - Available for devotee and priest accounts
-- Backend returns reset_token in the POST /api/auth/forgot-password response (PoC — normally emailed)
+- Backend returns reset_token in the POST /api/auth/forgot-password response only when ENVIRONMENT=development (no email/SMS delivery yet; in production the token is only written to the server log)
 - POST /api/auth/reset-password { reset_token, new_password }
 - Admin passwords cannot be reset via this flow.
 

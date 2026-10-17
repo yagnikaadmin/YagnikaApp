@@ -1,4 +1,4 @@
-# Yagnika — PoC PRD (v2, Auto-Assignment)
+# Yagnika — PRD (v2, Auto-Assignment)
 
 ## Overview
 Yagnika connects Devotees (Yajmanas) with Priests (Yagnikas) for pooja bookings. The v2 refactor replaces manual priest selection with an **Automatic Priest Assignment** model: devotees choose a pooja + date/time; the system fans the request out to all eligible priests, and the first to Accept becomes the assigned priest.
@@ -53,7 +53,7 @@ Yagnika connects Devotees (Yajmanas) with Priests (Yagnikas) for pooja bookings.
 7. Once assigned, priest's future `/inbox` calls skip conflicting time slots for their next assignments.
 
 ## Real-time behavior
-Client polls every 5-8 s while a dashboard is focused (devotee dashboard, booking confirmation, priest dashboard, admin dashboard). No WebSockets — polling is sufficient for PoC.
+Client polls every 5-8 s while a dashboard is focused (devotee dashboard, booking confirmation, priest dashboard, admin dashboard). No WebSockets — polling is the current approach.
 
 ## Seed data (startup)
 - 10 poojas (idempotent; existing docs backfilled with `is_active=true`)

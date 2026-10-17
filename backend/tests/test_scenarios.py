@@ -65,11 +65,20 @@ def register_devotee(session, name="Test Devotee"):
     return r.json()
 
 
-def register_priest(session, services, name="Test Priest"):
-    r = session.post(f"{API}/auth/register-priest", json={
-        "name": name, "email": unique_email("priest"), "mobile": "9111111111", "password": "password123",
+def priest_payload(email, services, name="Test Priest", mobile="9111111111", password="password123"):
+    # Mirrors the mandatory fields of PriestRegister in server.py.
+    return {
+        "name": name, "email": email, "mobile": mobile, "password": password,
         "address": "123 Test Street", "latitude": 17.4, "longitude": 78.5, "services": services,
-    }, timeout=10)
+        "aadhaar_number": "123412341234", "date_of_birth": "1980-01-15",
+        "sampradaya": "Smarta", "agama": "Vaikhanasa", "veda": "Yajur Veda", "shakha": "Taittiriya",
+        "sutra": "Apastamba", "gotra": "Bharadwaja", "pravara": "Angirasa, Barhaspatya, Bharadwaja",
+        "years_of_experience": 10, "languages": ["Sanskrit", "Telugu"], "priest_type": "independent",
+    }
+
+
+def register_priest(session, services, name="Test Priest"):
+    r = session.post(f"{API}/auth/register-priest", json=priest_payload(unique_email("priest"), services, name=name), timeout=10)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -319,10 +328,9 @@ class TestDualRoleAccounts:
         }, timeout=10)
         assert as_devotee.status_code == 200, as_devotee.text
 
-        as_priest = session.post(f"{API}/auth/register-priest", json={
-            "name": "Dual Person", "email": email, "mobile": "9222222222", "password": password,
-            "address": "1 Test Rd", "latitude": 17.4, "longitude": 78.5, "services": [pooja_id],
-        }, timeout=10)
+        as_priest = session.post(f"{API}/auth/register-priest", json=priest_payload(
+            email, [pooja_id], name="Dual Person", mobile="9222222222", password=password,
+        ), timeout=10)
         assert as_priest.status_code == 200, as_priest.text
         assert as_devotee.json()["user"]["id"] != as_priest.json()["user"]["id"], \
             "same email, but two distinct accounts (one per role)"
@@ -351,10 +359,10 @@ class TestDualRoleAccounts:
         assert devotee_login.status_code == 200
         assert devotee_login.json()["user"]["role"] == "devotee"
 
-        session.post(f"{API}/auth/register-priest", json={
-            "name": "Scoped Person", "email": email, "mobile": "9333333333", "password": password,
-            "address": "1 Test Rd", "latitude": 17.4, "longitude": 78.5, "services": [pooja_id],
-        }, timeout=10)
+        as_priest = session.post(f"{API}/auth/register-priest", json=priest_payload(
+            email, [pooja_id], name="Scoped Person", mobile="9333333333", password=password,
+        ), timeout=10)
+        assert as_priest.status_code == 200, as_priest.text
 
         priest_login = session.post(f"{API}/auth/login", json={"email": email, "password": password, "role": "priest"}, timeout=10)
         assert priest_login.status_code == 200

@@ -343,7 +343,7 @@ class ActiveToggle(BaseModel):
 
 # ============ Rate limiting ============
 # Minimal in-memory sliding-window limiter, keyed by client IP + bucket name.
-# Deliberately dependency-free: fine for a single-process PoC deployment,
+# Deliberately dependency-free: fine for a single-process deployment,
 # but state is per-process and resets on restart — a multi-instance
 # deployment would need a shared store (e.g. Redis) instead.
 _rate_limit_buckets: dict[str, list[float]] = defaultdict(list)
@@ -1573,10 +1573,10 @@ async def root():
 
 @api_router.get("/download-source")
 async def download_source():
-    path = ROOT_DIR / "downloads" / "yagnika_poc_source.zip"
+    path = ROOT_DIR / "downloads" / "yagnika_source.zip"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Source archive not found")
-    return FileResponse(str(path), media_type="application/zip", filename="yagnika_poc_source.zip")
+    return FileResponse(str(path), media_type="application/zip", filename="yagnika_source.zip")
 
 
 # ============ Seed (poojas only + admin) ============

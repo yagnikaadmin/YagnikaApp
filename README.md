@@ -1,6 +1,6 @@
-# Yagnika PoC — Setup & Run Guide
+# Yagnika — Setup & Run Guide
 
-React Native (Expo) + FastAPI + MongoDB proof-of-concept implementing the automatic-priest-assignment booking model.
+React Native (Expo) + FastAPI + MongoDB app implementing the automatic-priest-assignment booking model.
 
 ## What's inside this bundle
 
@@ -41,7 +41,7 @@ memory/
 
 INTEGRATION.md    Full API reference, auth model, data schema, deployment
 TESTING.md        Copy-paste curl recipes for every flow
-README_YAGNIKA_POC.md   ← you are here
+README.md               ← you are here
 ```
 
 ## Prerequisites
@@ -93,13 +93,13 @@ Press `w` (web), `i` (iOS Simulator), `a` (Android emulator), or scan the QR wit
 ## Rebuilding the source zip
 
 ```bash
-cd /app && rm -f yagnika_poc_source.zip
-zip -rq yagnika_poc_source.zip \
+cd /app && rm -f yagnika_source.zip
+zip -rq yagnika_source.zip \
   backend/server.py backend/requirements.txt backend/.env.example \
   frontend/app frontend/src frontend/assets frontend/package.json frontend/app.json \
   frontend/tsconfig.json frontend/eslint.config.js frontend/metro.config.js \
   memory/PRD.md memory/test_credentials.md \
-  INTEGRATION.md TESTING.md README_YAGNIKA_POC.md \
+  INTEGRATION.md TESTING.md README.md \
   -x "*/node_modules/*" "*/.metro-cache/*" "*/.git/*" "*/.expo/*"
 ```
 

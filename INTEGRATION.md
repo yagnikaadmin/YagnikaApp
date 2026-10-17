@@ -1,4 +1,4 @@
-# Yagnika PoC — Integration Guide
+# Yagnika — Integration Guide
 
 Complete reference for wiring the Yagnika application: architecture, auth flow, API contracts, environment variables, dependencies, and deployment.
 
@@ -94,7 +94,7 @@ The client always calls `${EXPO_PUBLIC_API_URL}/api/…`.
 3. On every protected request the client sends the token; the backend decodes it via `OAuth2PasswordBearer` and looks up the user in Mongo, rejecting inactive accounts.
 4. Logout is client-side (`AsyncStorage.multiRemove`).
 
-### Forgot password (PoC)
+### Forgot password (no email delivery yet)
 - `POST /api/auth/forgot-password { email }` → returns `{ reset_token }` (in production this would be emailed).
 - `POST /api/auth/reset-password { reset_token, new_password }` → updates hash, marks token used.
 - Admin passwords are **not resettable** via this flow.
