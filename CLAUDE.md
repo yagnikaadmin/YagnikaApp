@@ -145,7 +145,7 @@ Code flows **`dev` → `test` → `prod`**, and `main` mirrors `prod`.
 
 ## Frontend (`frontend/`)
 
-Expo SDK 54, React Native 0.81, React 19, new architecture, typed routes. `@/` resolves to `frontend/`.
+Expo SDK 57, React Native 0.86, React 19.2, TypeScript 6, typed routes (check `package.json` before relying on version-specific APIs). `@/` resolves to `frontend/`.
 
 ### Two flavors
 
