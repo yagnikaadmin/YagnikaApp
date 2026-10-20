@@ -415,68 +415,148 @@ class TestDualRoleAccounts:
         assert priest_login.json()["user"]["id"] != devotee_login.json()["user"]["id"]
 
 
+@pytest.fixture(scope="session")
+def devotee(session):
+    # Shared by the tests below: registration is rate-limited (50/h per IP).
+    return register_devotee(session)
+
+
+def days_ahead(n: int) -> str:
+    return (date.today() + timedelta(days=n)).isoformat()
+
+
+WEEKDAY_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def book(session, devotee, pooja_id, booking_date, booking_time):
+    return session.post(f"{API}/bookings", json={
+        "pooja_id": pooja_id, "booking_date": booking_date, "booking_time": booking_time,
+        "sankalp_name": "X", "gothram": "G", "place": "P",
+    }, headers=auth_headers(devotee["access_token"]), timeout=10)
+
+
+def offered_to(priest, response) -> bool:
+    """Whether a POST /bookings response offered the booking to `priest`.
+    A 409 means no priest at all qualified — so not this one either."""
+    if response.status_code == 409:
+        return False
+    assert response.status_code == 200, response.text
+    return priest["user"]["id"] in response.json()["eligible_priest_ids"]
+
+
 class TestPriestBusyState:
-    def test_priest_goes_busy_on_accept_and_free_again_on_complete(self, session, poojas):
+    # `busy` is recorded but no longer blocks: only a real time clash does.
+    def test_busy_flag_tracks_accept_and_complete_but_does_not_block(self, session, poojas, devotee):
         pooja_id = next(iter(poojas))
         priest = register_priest(session, [pooja_id])
-        d1 = register_devotee(session)
-        d2 = register_devotee(session)
 
-        b1 = session.post(f"{API}/bookings", json={
-            "pooja_id": pooja_id, "booking_date": TOMORROW, "booking_time": "04:00 PM",
-            "sankalp_name": "Busy1", "gothram": "G", "place": "P",
-        }, headers=auth_headers(d1["access_token"]), timeout=10).json()
-        assert priest["user"]["id"] in b1["eligible_priest_ids"]
-
-        accept = session.post(f"{API}/bookings/{b1['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10)
+        b1 = book(session, devotee, pooja_id, TOMORROW, "04:00 PM")
+        assert offered_to(priest, b1)
+        accept = session.post(f"{API}/bookings/{b1.json()['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10)
         assert accept.status_code == 200
-
         me = session.get(f"{API}/auth/me", headers=auth_headers(priest["access_token"]), timeout=10).json()
         assert me["busy"] is True
 
-        # A second, non-conflicting booking (different time, same day) must
-        # not offer this priest — they're busy until b1 is completed, even
-        # though the time slots themselves don't overlap.
-        b2 = session.post(f"{API}/bookings", json={
-            "pooja_id": pooja_id, "booking_date": TOMORROW, "booking_time": "07:00 PM",
-            "sankalp_name": "Busy2", "gothram": "G", "place": "P",
-        }, headers=auth_headers(d2["access_token"]), timeout=10)
-        if b2.status_code == 200:
-            assert priest["user"]["id"] not in b2.json()["eligible_priest_ids"]
-        else:
-            assert b2.status_code == 409  # only fails open if no other priest covers this pooja either
+        # Non-overlapping times the same day, and another date, still reach them.
+        assert offered_to(priest, book(session, devotee, pooja_id, TOMORROW, "08:00 AM"))
+        assert offered_to(priest, book(session, devotee, pooja_id, days_ahead(2), "04:00 PM"))
 
-        complete = session.post(f"{API}/bookings/{b1['id']}/complete", headers=auth_headers(priest["access_token"]), timeout=10)
+        complete = session.post(f"{API}/bookings/{b1.json()['id']}/complete", headers=auth_headers(priest["access_token"]), timeout=10)
         assert complete.status_code == 200
-
         me_after = session.get(f"{API}/auth/me", headers=auth_headers(priest["access_token"]), timeout=10).json()
         assert me_after["busy"] is False
 
-    def test_busy_priest_cannot_accept_a_second_already_offered_booking(self, session, poojas):
+    def test_priest_can_accept_a_second_non_overlapping_booking(self, session, poojas, devotee):
         pooja_id = next(iter(poojas))
         priest = register_priest(session, [pooja_id])
-        devotee = register_devotee(session)
-
-        # Both created while the priest is still free, so both list them
-        # as eligible up front.
-        b1 = session.post(f"{API}/bookings", json={
-            "pooja_id": pooja_id, "booking_date": TOMORROW, "booking_time": "05:00 PM",
-            "sankalp_name": "First", "gothram": "G", "place": "P",
-        }, headers=auth_headers(devotee["access_token"]), timeout=10).json()
-        b2 = session.post(f"{API}/bookings", json={
-            "pooja_id": pooja_id, "booking_date": TOMORROW, "booking_time": "11:00 AM",
-            "sankalp_name": "Second", "gothram": "G", "place": "P",
-        }, headers=auth_headers(devotee["access_token"]), timeout=10).json()
-        assert priest["user"]["id"] in b1["eligible_priest_ids"]
-        assert priest["user"]["id"] in b2["eligible_priest_ids"]
+        b1 = book(session, devotee, pooja_id, TOMORROW, "05:00 PM").json()
+        b2 = book(session, devotee, pooja_id, days_ahead(2), "11:00 AM").json()
 
         accept1 = session.post(f"{API}/bookings/{b1['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10)
         assert accept1.status_code == 200
-
-        # b2 doesn't time-conflict with b1, but the priest is now busy —
-        # must still be rejected.
         accept2 = session.post(f"{API}/bookings/{b2['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10)
-        assert accept2.status_code == 409
+        assert accept2.status_code == 200
+
+    def test_overlapping_request_not_offered_but_other_dates_are(self, session, devotee):
+        # Priest A holds 11 AM-2 PM (Navagraha Homam, 3h): a 10 AM-1 PM
+        # request that day must not reach them; the next day, or 3 PM, does.
+        priest = register_priest(session, ["p5"])
+        day = days_ahead(3)
+        b1 = book(session, devotee, "p5", day, "11:00 AM").json()
+        assert session.post(f"{API}/bookings/{b1['id']}/accept", headers=auth_headers(priest["access_token"]), timeout=10).status_code == 200
+
+        assert not offered_to(priest, book(session, devotee, "p5", day, "10:00 AM"))
+        assert offered_to(priest, book(session, devotee, "p5", day, "03:00 PM"))
+        assert offered_to(priest, book(session, devotee, "p5", days_ahead(4), "10:00 AM"))
+
+
+class TestAvailabilityEligibility:
+    def test_paused_in_person_priest_not_offered(self, session, poojas, devotee):
+        pooja_id = next(iter(poojas))
+        priest = register_priest(session, [pooja_id])
+        r = session.patch(f"{API}/priest/availability", json={"offline_paused": True},
+                          headers=auth_headers(priest["access_token"]), timeout=10)
+        assert r.status_code == 200
+        assert not offered_to(priest, book(session, devotee, pooja_id, TOMORROW, "09:00 AM"))
+
+        session.patch(f"{API}/priest/availability", json={"offline_paused": False},
+                      headers=auth_headers(priest["access_token"]), timeout=10)
+        assert offered_to(priest, book(session, devotee, pooja_id, TOMORROW, "09:00 AM"))
+
+    def test_weekly_off_day_and_unavailable_window(self, session, devotee):
+        priest = register_priest(session, ["p2"])  # Ganapathi Homam, 1.5h
+        off_day, part_day = days_ahead(5), days_ahead(6)
+        key = lambda d: WEEKDAY_KEYS[date.fromisoformat(d).weekday()]
+        h = auth_headers(priest["access_token"])
+        assert session.put(f"{API}/priest/availability/weekly/{key(off_day)}", json={"mode": "both", "off": True},
+                           headers=h, timeout=10).status_code == 200
+        assert session.put(f"{API}/priest/availability/weekly/{key(part_day)}", json={
+            "mode": "both", "unavailable": [{"start": "06:00 AM", "end": "09:00 AM"}],
+        }, headers=h, timeout=10).status_code == 200
+
+        assert not offered_to(priest, book(session, devotee, "p2", off_day, "10:00 AM"))
+        assert not offered_to(priest, book(session, devotee, "p2", part_day, "08:00 AM"))
+        assert offered_to(priest, book(session, devotee, "p2", part_day, "10:00 AM"))
+
+    def test_date_override(self, session, devotee):
+        priest = register_priest(session, ["p5"])  # Navagraha Homam, 3h
+        closed, limited = days_ahead(7), days_ahead(8)
+        h = auth_headers(priest["access_token"])
+        assert session.put(f"{API}/priest/availability/overrides/{closed}", json={"available": False},
+                           headers=h, timeout=10).status_code == 200
+        assert session.put(f"{API}/priest/availability/overrides/{limited}", json={
+            "available": True, "slots": [{"start": "10:00 AM", "end": "02:00 PM"}],
+        }, headers=h, timeout=10).status_code == 200
+
+        assert not offered_to(priest, book(session, devotee, "p5", closed, "10:00 AM"))
+        assert offered_to(priest, book(session, devotee, "p5", limited, "10:30 AM"))       # 10:30-13:30 fits
+        assert not offered_to(priest, book(session, devotee, "p5", limited, "11:30 AM"))   # runs to 14:30
+
+    def test_pausing_after_booking_hides_it_and_blocks_accept(self, session, poojas, devotee):
+        pooja_id = next(iter(poojas))
+        priest = register_priest(session, [pooja_id])
+        b = book(session, devotee, pooja_id, TOMORROW, "06:00 PM")
+        assert offered_to(priest, b)
+        h = auth_headers(priest["access_token"])
+        session.patch(f"{API}/priest/availability", json={"offline_paused": True}, headers=h, timeout=10)
+
+        inbox = session.get(f"{API}/bookings/priest/inbox", headers=h, timeout=10).json()
+        assert b.json()["id"] not in [x["id"] for x in inbox]
+        assert session.post(f"{API}/bookings/{b.json()['id']}/accept", headers=h, timeout=10).status_code == 409
+
+    def test_buffer_extends_accepted_booking(self, session, devotee):
+        priest = register_priest(session, ["p2"])  # Ganapathi Homam, 1.5h
+        day = days_ahead(9)
+        h = auth_headers(priest["access_token"])
+        # Saving any weekday carries buffer_minutes; use a different weekday than `day`.
+        other = WEEKDAY_KEYS[(date.fromisoformat(day).weekday() + 1) % 7]
+        assert session.put(f"{API}/priest/availability/weekly/{other}", json={"mode": "both", "buffer_minutes": 30},
+                           headers=h, timeout=10).status_code == 200
+
+        b1 = book(session, devotee, "p2", day, "08:00 AM").json()   # 08:00-09:30
+        assert session.post(f"{API}/bookings/{b1['id']}/accept", headers=h, timeout=10).status_code == 200
+        assert not offered_to(priest, book(session, devotee, "p2", day, "09:45 AM"))
+        assert offered_to(priest, book(session, devotee, "p2", day, "10:00 AM"))
 
 
 class TestPriestApproval:

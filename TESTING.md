@@ -62,7 +62,7 @@ BID=$(echo $BK | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 curl -s -H "Authorization: Bearer $P1_TOKEN" $URL/api/bookings/priest/inbox | python3 -c "import sys,json;print('P1 inbox:',len(json.load(sys.stdin)))"
 curl -s -H "Authorization: Bearer $P2_TOKEN" $URL/api/bookings/priest/inbox | python3 -c "import sys,json;print('P2 inbox:',len(json.load(sys.stdin)))"
 
-# Priest A accepts (A is now busy until this booking is completed)
+# Priest A accepts (busy=true until completed; informational only, A still gets non-overlapping requests)
 curl -s -X POST $URL/api/bookings/$BID/accept -H "Authorization: Bearer $P1_TOKEN" | python3 -c "import sys,json;print('status:',json.load(sys.stdin)['status'])"
 curl -s -H "Authorization: Bearer $P1_TOKEN" $URL/api/auth/me | python3 -c "import sys,json;print('P1 busy:',json.load(sys.stdin)['busy'])"
 
@@ -88,7 +88,16 @@ curl -s -X POST $URL/api/bookings -H "Content-Type: application/json" -H "Author
 # Expected: eligible=1
 ```
 
-Overlap uses each pooja's own `duration` (unparseable or empty durations fall back to 120 minutes). A priest who is `busy` (has an accepted, not-yet-completed booking) is excluded from every new booking regardless of time. The priest's availability schedule (`/api/priest/availability…`) is **not** consulted when choosing eligible priests.
+Overlap uses each pooja's own `duration` (unparseable or empty durations fall back to 120 minutes), and each existing booking is widened by the priest's `buffer_minutes`. `busy` does not exclude a priest; only an overlap does. The priest's availability (`/api/priest/availability…`: pause toggles, weekly off days/unavailable windows, per-date overrides, `working_status`) is applied in person mode when choosing eligible priests, in the inbox and on accept (409 "You are marked unavailable at this time").
+
+```bash
+# Priest B pauses in-person poojas → no longer eligible
+curl -s -X PATCH $URL/api/priest/availability -H "Content-Type: application/json" -H "Authorization: Bearer $P2_TOKEN" -d '{"offline_paused":true}' > /dev/null
+curl -s -X POST $URL/api/bookings -H "Content-Type: application/json" -H "Authorization: Bearer $D_TOKEN" \
+  -d '{"pooja_id":"p1","booking_date":"'"$DATE"'","booking_time":"04:00 PM","sankalp_name":"Ravi","gothram":"X","place":"Y"}' \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('eligible=',len(d['eligible_priest_ids']))"
+# Expected: eligible=1 (only A). Undo with {"offline_paused":false}.
+```
 
 ## 3. No priests available
 

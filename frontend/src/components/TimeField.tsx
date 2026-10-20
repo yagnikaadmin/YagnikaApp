@@ -27,16 +27,20 @@ export function timeToMinutes(v: string): number {
   return h24 * 60 + m;
 }
 
+// minutes from midnight (wrapped into 0..1439) -> "hh:mm AM"; inverse of timeToMinutes
+export function minutesToTime(total: number): string {
+  const t = ((total % 1440) + 1440) % 1440;
+  const h24 = Math.floor(t / 60);
+  return formatTime(h24 % 12 === 0 ? 12 : h24 % 12, t % 60, h24 < 12 ? 'AM' : 'PM');
+}
+
 export default function TimeField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { h, m, ap } = parseTime(value);
   const set = (nh: number, nm: number, nap: 'AM' | 'PM') => onChange(formatTime(nh, nm, nap));
 
-  const bumpH = (d: number) => set(((h - 1 + d + 12) % 12) + 1, m, ap);
-  const bumpM = (d: number) => {
-    const total = (h % 12) * 60 + m + d * STEP;
-    const wrapped = (total + 12 * 60) % (12 * 60);
-    set(Math.floor(wrapped / 60) === 0 ? 12 : Math.floor(wrapped / 60), wrapped % 60, ap);
-  };
+  // Step on a 24-hour clock so 11 AM -> 12 PM (not 12 AM), like a real clock.
+  const bumpH = (d: number) => onChange(minutesToTime(timeToMinutes(value) + d * 60));
+  const bumpM = (d: number) => onChange(minutesToTime(timeToMinutes(value) + d * STEP));
 
   return (
     <View style={styles.row}>

@@ -108,7 +108,7 @@ Code flows **`dev` → `test` → `prod`**, and `main` mirrors `prod`.
   - **Stored data**: `users.availability` holds pause toggles (`offline_paused`, `epuja_paused`), `same_availability`, three weekly schedules (`weekly`, `weekly_inperson`, `weekly_epuja`, each per day `{off, unavailable:[{start,end}]}`) and `buffer_minutes`. Per-date overrides live in `availability_overrides` and are *positive* (`available`, `slots`).
   - **Resolution** for a date and mode: pause → override → weekly.
   - **Endpoints**: priests use `/priest/availability…`; devotees use `/priests/{id}/availability[/day]`.
-  - **Not enforced: eligibility (`find_eligible_priests`) ignores availability and `working_status` entirely.**
+  - **Enforced for bookings** by `_fits_availability` (in-person mode, since bookings carry no mode yet): `working_status` `on_leave`/`not_available`, a pause, an "off" day or an `available=false` override exclude the priest; an override with slots requires the booking to fit inside one slot; weekly `unavailable` windows must not overlap it. A booking past midnight is checked against its start date only. `buffer_minutes` widens the priest's existing bookings in the overlap check. `priest_availability_day` and the booking checks share `_resolve_day`.
 - **Pooja catalog**: the `poojas` collection holds two families:
   - **Demo poojas** `p1`–`p10`: they have a duration and price but no category, and the customer app shows them as "featured".
   - **The `SERVICE_CATALOG`** (`sc-*`): 9 categories, with an empty duration (→ 120-min fallback) and price 0. Its order in `server.py` fixes the ids; display order comes from `CATEGORY_ORDER` in `frontend/src/i18n/catalog.ts`. Append new categories last to keep ids stable.
@@ -130,10 +130,12 @@ Code flows **`dev` → `test` → `prod`**, and `main` mirrors `prod`.
 
 `Pending Priest Assignment` → `Priest Assigned` → `Completed`. `Cancelled` is in the enum but nothing sets it, and there is no cancel or reschedule endpoint.
 
-1. **Create**: `POST /bookings` (devotees only) takes `pooja_id`, `booking_date` (YYYY-MM-DD, not in the past by UTC), `booking_time` (`"08:00 AM"` or `"14:30"`), `sankalp_name`, `gothram` and `place`. It also accepts optional `notes`, `contact_mobile` (falls back to the account mobile) and `latitude`/`longitude` (the map pin). It stores `duration_minutes` (from the pooja; fallback `SLOT_MINUTES=120`) and snapshots `eligible_priest_ids`: active priests offering the pooja who are not `busy` and have no overlapping `Priest Assigned`/`Completed` booking on that date. If no priest qualifies, it returns 409.
-2. **Inbox**: `GET /bookings/priest/inbox` lists pending bookings where the priest is eligible, hasn't rejected, and still has no overlap. `/reject` only adds the priest to `rejected_by`.
-3. **Accept**: `/accept` returns 409 if the priest is busy or overlapping. Otherwise it does an atomic `update_one` filtered on the pending status, and race losers get 409. The winner becomes `busy=True`.
+1. **Create**: `POST /bookings` (devotees only) takes `pooja_id`, `booking_date` (YYYY-MM-DD, not in the past by UTC), `booking_time` (`"08:00 AM"` or `"14:30"`), `sankalp_name`, `gothram` and `place`. It also accepts optional `notes`, `contact_mobile` (falls back to the account mobile) and `latitude`/`longitude` (the map pin). It stores `duration_minutes` (from the pooja; fallback `SLOT_MINUTES=120`) and snapshots `eligible_priest_ids` (`find_eligible_priests` → `priest_can_take`): active priests offering the pooja whose availability allows the slot and who have no `Priest Assigned`/`Completed` booking that date overlapping it (± their `buffer_minutes`). If no priest qualifies, it returns 409.
+2. **Inbox**: `GET /bookings/priest/inbox` lists pending bookings where the priest is eligible, hasn't rejected, and still passes `priest_can_take` (so pausing or blocking time hides bookings already offered). `/reject` only adds the priest to `rejected_by`.
+3. **Accept**: `/accept` returns 409 on an overlap or when the priest is now unavailable. Otherwise it does an atomic `update_one` filtered on the pending status, and race losers get 409. The winner becomes `busy=True`. The overlap check isn't transactional, so one priest accepting two overlapping bookings at the same instant could get both.
 4. **Complete**: `/complete` (assigned priest only) moves the booking to `Completed` and clears `busy` once the priest has no `Priest Assigned` bookings left.
+
+`busy` is informational only (shown in `/auth/me` and the admin view): it no longer blocks new bookings or accepting, so a priest with an accepted booking still gets requests for other dates and non-overlapping times.
 
 ### Panchangam (`backend/panchangam/`)
 
@@ -233,7 +235,6 @@ Release blockers for the priest-app launch:
 - **App identity is still a scaffold.** `app.json` has `name`/`slug`/`scheme` = `frontend` and bundle id/package `com.emergent.yagnikafirestore.gjsbb9`, and the single config serves both flavors. The priest app needs its own final name, bundle id and package before the first store submission. Have the config pick identity by `EXPO_PUBLIC_APP_FLAVOR` (e.g. `app.config.js`), so the later customer app gets a separate one. The bundle id can't change after publishing.
 
 Should fix:
-- **Availability isn't used for booking eligibility.** Neither are pauses or `working_status`, so a paused or "on leave" priest still receives bookings.
 - **PII in plaintext**: Aadhaar number, DOB and the Aadhaar proof / Agama certificate files (base64) are stored in plaintext in both `users` and `priest_registration`, and returned by `/auth/me/full` and the admin registration list.
 - **Source download endpoint**: `GET /api/download-source` serves a source zip whenever `backend/downloads/yagnika_source.zip` exists. Remove it.
 - **Map tiles**: `MapPicker` uses public OpenStreetMap tiles and the unpkg CDN. OSM's tile policy disallows heavy app use, so a tile provider is needed.

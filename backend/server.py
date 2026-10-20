@@ -85,11 +85,10 @@ class UserPublic(BaseModel):
     # Priest-only: pending | approved | rejected (None for legacy/devotee).
     approval_status: Optional[str] = None
     # Priest-only: true while they have a "Priest Assigned" booking that
-    # hasn't been marked Completed yet. A busy priest is excluded from new
-    # booking eligibility until it flips back to false (see accept_booking
-    # / complete_booking). Distinct from is_active on purpose — is_active
-    # gates login, and a busy priest still needs to log in to manage the
-    # very booking that made them busy.
+    # hasn't been marked Completed yet (see accept_booking / complete_booking).
+    # Informational only: it no longer blocks new bookings — eligibility uses
+    # time overlap and the priest's availability instead. Distinct from
+    # is_active, which gates login.
     busy: bool = False
 
 
@@ -476,7 +475,10 @@ def intervals_overlap(start_a: int, dur_a: int, start_b: int, dur_b: int) -> boo
     return start_a < start_b + dur_b and start_b < start_a + dur_a
 
 
-async def priest_has_conflict(priest_id: str, date: str, time_str: str, duration_minutes: int) -> bool:
+async def priest_has_conflict(priest_id: str, date: str, time_str: str, duration_minutes: int,
+                              buffer_minutes: int = 0) -> bool:
+    """True if [time_str, +duration) overlaps one of the priest's accepted or
+    completed bookings that date, each widened by buffer_minutes on both sides."""
     start = parse_time_to_minutes(time_str)
     accepted = await db.bookings.find({
         "priest_id": priest_id,
@@ -484,23 +486,41 @@ async def priest_has_conflict(priest_id: str, date: str, time_str: str, duration
         "status": {"$in": ["Priest Assigned", "Completed"]},
     }, {"_id": 0, "booking_time": 1, "duration_minutes": 1}).to_list(1000)
     for b in accepted:
-        other_start = parse_time_to_minutes(b["booking_time"])
-        other_dur = b.get("duration_minutes") or SLOT_MINUTES
+        other_start = parse_time_to_minutes(b["booking_time"]) - buffer_minutes
+        other_dur = (b.get("duration_minutes") or SLOT_MINUTES) + 2 * buffer_minutes
         if intervals_overlap(start, duration_minutes, other_start, other_dur):
             return True
     return False
+
+
+def _buffer_of(priest_doc: dict) -> int:
+    try:
+        return max(0, int((priest_doc.get("availability") or {}).get("buffer_minutes") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def priest_can_take(priest_doc: dict, override: Optional[dict], date: str, time_str: str,
+                          duration_minutes: int) -> bool:
+    """Eligibility for one priest and slot: their own availability settings
+    allow it and it doesn't clash (± their buffer) with a booking they hold.
+    The `busy` flag is deliberately NOT consulted — overlap covers real clashes."""
+    if not _fits_availability(priest_doc, override, date, parse_time_to_minutes(time_str), duration_minutes):
+        return False
+    return not await priest_has_conflict(priest_doc["id"], date, time_str, duration_minutes, _buffer_of(priest_doc))
 
 
 async def find_eligible_priests(pooja_id: str, date: str, time_str: str, duration_minutes: int) -> List[dict]:
     priests = await db.users.find({
         "role": "priest",
         "is_active": True,
-        "busy": {"$ne": True},
         "services": pooja_id,
     }, {"_id": 0, "hashed_password": 0}).to_list(1000)
+    overrides = {o["priest_id"]: o for o in await db.availability_overrides.find(
+        {"priest_id": {"$in": [p["id"] for p in priests]}, "date": date}, {"_id": 0}).to_list(1000)}
     eligible = []
     for p in priests:
-        if not await priest_has_conflict(p["id"], date, time_str, duration_minutes):
+        if await priest_can_take(p, overrides.get(p["id"]), date, time_str, duration_minutes):
             eligible.append(p)
     return eligible
 
@@ -1050,6 +1070,59 @@ def _clean_slots(slots: List[AvSlot]) -> list[dict]:
     return [{"start": p[2], "end": p[3]} for p in parsed]
 
 
+def _resolve_day(avail: dict, override: Optional[dict], d, mode: str) -> dict:
+    """Resolved availability for one date+mode. Priority: pause toggle ->
+    per-date override -> weekly unavailability. `avail` is normalized."""
+    is_offline = mode.lower() in ("inperson", "offline")
+    if (is_offline and avail["offline_paused"]) or (not is_offline and avail["epuja_paused"]):
+        return {"date": d.isoformat(), "available": False, "off": True,
+                "unavailable": [], "slots": [], "source": "paused"}
+    if override is not None:
+        return {"date": d.isoformat(), "available": bool(override.get("available")),
+                "off": (not override.get("available")), "unavailable": [],
+                "slots": override.get("slots") or [], "source": "override"}
+    key = "weekly" if avail["same_availability"] else (
+        "weekly_inperson" if is_offline else "weekly_epuja")
+    day = avail[key][DAYS[d.weekday()]]
+    if day["off"]:
+        return {"date": d.isoformat(), "available": False, "off": True,
+                "unavailable": [], "slots": [], "source": "weekly"}
+    return {"date": d.isoformat(), "available": True, "off": False,
+            "unavailable": day["unavailable"], "slots": [], "source": "weekly"}
+
+
+def _window_minutes(slot: dict) -> Optional[tuple[int, int]]:
+    """(start, end) minutes of a stored {start,end} slot, or None if malformed."""
+    try:
+        return parse_time_to_minutes(slot["start"]), parse_time_to_minutes(slot["end"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _fits_availability(priest_doc: dict, override: Optional[dict], date: str, start: int,
+                       duration_minutes: int, mode: str = "inperson") -> bool:
+    """Whether the priest's own settings allow a booking at [start, +duration)
+    on `date`. Bookings carry no mode yet and are all in person. A booking
+    running past midnight is checked against its start date only."""
+    if priest_doc.get("working_status") in ("on_leave", "not_available"):
+        return False
+    try:
+        d = datetime.strptime(date.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return True  # legacy booking date we can't read: don't hide it on that basis
+    day = _resolve_day(_norm_availability(priest_doc.get("availability")), override, d, mode)
+    if not day["available"]:
+        return False
+    end = start + duration_minutes
+    if day["slots"]:  # positive override: must fit inside one available window
+        windows = [w for w in map(_window_minutes, day["slots"]) if w]
+        return any(a <= start and end <= b for a, b in windows)
+    for w in map(_window_minutes, day["unavailable"]):
+        if w and intervals_overlap(start, duration_minutes, w[0], w[1] - w[0]):
+            return False
+    return True
+
+
 @api_router.get("/priest/availability")
 async def get_availability(current: UserPublic = Depends(get_current_user)):
     _require_priest(current)
@@ -1153,32 +1226,9 @@ async def priest_availability_day(priest_id: str, date: str, mode: str = "epuja"
         d = datetime.strptime(date.strip(), "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
-    avail = _norm_availability(p.get("availability"))
-    m = mode.lower()
-    is_offline = m in ("inperson", "offline")
-
-    if is_offline and avail["offline_paused"]:
-        return {"date": d.isoformat(), "available": False, "off": True,
-                "unavailable": [], "slots": [], "source": "paused"}
-    if not is_offline and avail["epuja_paused"]:
-        return {"date": d.isoformat(), "available": False, "off": True,
-                "unavailable": [], "slots": [], "source": "paused"}
-
     o = await db.availability_overrides.find_one(
         {"priest_id": priest_id, "date": d.isoformat()}, {"_id": 0})
-    if o is not None:
-        return {"date": d.isoformat(), "available": bool(o["available"]),
-                "off": (not o["available"]), "unavailable": [],
-                "slots": o["slots"], "source": "override"}
-
-    key = "weekly" if avail["same_availability"] else (
-        "weekly_inperson" if is_offline else "weekly_epuja")
-    day = avail[key][DAYS[d.weekday()]]
-    if day["off"]:
-        return {"date": d.isoformat(), "available": False, "off": True,
-                "unavailable": [], "slots": [], "source": "weekly"}
-    return {"date": d.isoformat(), "available": True, "off": False,
-            "unavailable": day["unavailable"], "slots": [], "source": "weekly"}
+    return _resolve_day(_norm_availability(p.get("availability")), o, d, mode)
 
 
 # ============ Poojas ============
@@ -1286,10 +1336,16 @@ async def priest_inbox(current: UserPublic = Depends(get_current_user)):
         "eligible_priest_ids": current.id,
         "rejected_by": {"$ne": current.id},
     }, {"_id": 0}).to_list(1000)
-    # filter out bookings that now conflict with newly accepted bookings
+    # Drop bookings that now clash with one the priest accepted since, or that
+    # no longer fit their availability (they paused or blocked the time).
+    priest_doc = await db.users.find_one({"id": current.id}, {"_id": 0})
+    overrides = {o["date"]: o for o in await db.availability_overrides.find(
+        {"priest_id": current.id, "date": {"$in": list({b["booking_date"] for b in rows})}},
+        {"_id": 0}).to_list(1000)}
     result = []
     for b in rows:
-        if not await priest_has_conflict(current.id, b["booking_date"], b["booking_time"], b.get("duration_minutes") or SLOT_MINUTES):
+        if await priest_can_take(priest_doc, overrides.get(b["booking_date"]), b["booking_date"],
+                                 b["booking_time"], b.get("duration_minutes") or SLOT_MINUTES):
             result.append(b)
     result.sort(key=lambda x: x.get("created_date", ""), reverse=True)
     return [Booking(**r) for r in result]
@@ -1325,13 +1381,16 @@ async def accept_booking(booking_id: str, current: UserPublic = Depends(get_curr
         raise HTTPException(status_code=403, detail="You are not eligible for this booking")
 
     priest_doc = await db.users.find_one({"id": current.id}, {"_id": 0})
-    # A priest handling an active booking is busy until it's marked
-    # Completed (see complete_booking) — blocks accepting a second booking
-    # even one already sitting in their inbox from before they got busy.
-    if priest_doc.get("busy"):
-        raise HTTPException(status_code=409, detail="You already have an active booking in progress. Complete it before accepting another.")
-    if await priest_has_conflict(current.id, row["booking_date"], row["booking_time"], row.get("duration_minutes") or SLOT_MINUTES):
+    # `busy` is still recorded below but no longer blocks accepting: a priest
+    # can hold bookings on other dates/times; only real clashes are refused.
+    duration = row.get("duration_minutes") or SLOT_MINUTES
+    if await priest_has_conflict(current.id, row["booking_date"], row["booking_time"], duration, _buffer_of(priest_doc)):
         raise HTTPException(status_code=409, detail="You already have a booking in this time slot")
+    override = await db.availability_overrides.find_one(
+        {"priest_id": current.id, "date": row["booking_date"]}, {"_id": 0})
+    if not _fits_availability(priest_doc, override, row["booking_date"],
+                              parse_time_to_minutes(row["booking_time"]), duration):
+        raise HTTPException(status_code=409, detail="You are marked unavailable at this time")
 
     # Atomic accept: only succeeds if still pending
     res = await db.bookings.update_one(
@@ -1803,8 +1862,8 @@ async def seed_database():
     )
 
     # Backfill busy=True for any priest with a pre-existing "Priest
-    # Assigned" booking from before the busy flag existed, so they're
-    # correctly excluded from new eligibility until they complete it.
+    # Assigned" booking from before the busy flag existed, so the flag is
+    # accurate (it's informational — see UserPublic.busy).
     busy_priest_ids = await db.bookings.distinct("priest_id", {"status": "Priest Assigned"})
     if busy_priest_ids:
         await db.users.update_many({"id": {"$in": busy_priest_ids}}, {"$set": {"busy": True}})
